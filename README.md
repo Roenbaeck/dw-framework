@@ -23,7 +23,7 @@ The generated procedures log every run to the metadata model, together with the 
 - **SQL Server 2008 to 2022**, with SQL Server Agent if you use workflows. The folders named `SQL Server 2005` hold variants of the scripts for that version.
 - **`sqlcmd`**, only if you let the script install the generated SQL (the `<server>` argument below).
 - **Rights to enable and install the CLR.** Loading a source uses small .NET functions for splitting and type checking. The generated source script installs the assembly that matches your SQL Server (`code/Utilities<year>.dll`), enables `clr enabled` if it is off, and from SQL Server 2017 adds the assembly to the trusted assemblies using the `.SHA512` file next to it.
-- If your machine only runs signed PowerShell scripts, `Sign-Sisulate.ps1` creates a self-signed certificate for your machine and signs `Sisulate.ps1` with it.
+- If your machine only runs signed PowerShell scripts, `Sign-Sisulate.ps1` creates a self-signed certificate for your machine and signs `Sisulate.ps1` with it. `Sisulate.ps1` in this repository is not signed, and the repository holds no certificate: a certificate that you make is trusted on your machine only, and the signature has to be made again after every change to the script. The script trusts the certificate as a root and as a publisher for your user, so keep the private key to yourself (the script does not export it unless you pass `-ExportPfx`) and never commit the `SisulateCert.*` files that it writes.
 
 ## Quick start
 
@@ -132,7 +132,7 @@ Based on the provided examples, here is the standard project layout:
 | `code/` | The CLR utilities (`Utilities<year>.dll`, their `.SHA512` files and the source, `Utilities.cs`), the XSDs of the three XML formats (`source.xsd`, `target.xsd`, `workflow.xsd`), the bundled Jint, and a loading report. |
 | `Examples/` | The Golf and Traffic projects. |
 | `ETL Editor.html` | A stand-alone page for editing target definitions. Open it in a browser, open a target XML file, edit the loads and their mappings, including the SQL before, the SELECT and the SQL after, and download the result. |
-| `Sign-Sisulate.ps1` | Signs `Sisulate.ps1` with a self-signed certificate, for machines that only run signed scripts. |
+| `Sign-Sisulate.ps1` | Creates a self-signed certificate for your machine and signs `Sisulate.ps1` with it, for machines that only run signed scripts. See [Requirements](#requirements). |
 | `Sisulate.bat`, `SisulateWSH.bat`, `Sisulator.hta`, `Sisulator.js` | The legacy generators, in batch, HTA and JScript. They are deprecated, and kept for as long as Windows can still run them. |
 
 ## Not the same as the sisula repository

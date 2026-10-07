@@ -1,10 +1,18 @@
-# Sign-Sisulate.ps1 - Creates and installs a self-signed certificate, signs Sisulate.ps1, and exports certificate files
+# Sign-Sisulate.ps1 - Creates and installs a self-signed certificate, signs Sisulate.ps1, and exports the certificate
 #
-# Usage: .\Sign-Sisulate.ps1 -ScriptPath "C:\Path\To\Sisulate.ps1" [-OutputDir "C:\Temp"] [-SetExecutionPolicy] [-UseTimestamp]
+# Usage: .\Sign-Sisulate.ps1 -ScriptPath "C:\Path\To\Sisulate.ps1" [-OutputDir "C:\Temp"] [-ExportPfx [-PfxPassword <SecureString>]] [-SetExecutionPolicy] [-UseTimestamp]
+#
+# The certificate is made for this machine and this user, and is trusted (as a root and as a publisher)
+# for this user only. Nothing here should be shared: the repository does not contain a certificate or a
+# signed script, and the certificate files that this script writes (SisulateCert.*) must not be committed.
+# Anyone who gets the private key can sign scripts that this machine will accept.
 #
 # Parameters:
 #   -ScriptPath: Path to the Sisulate.ps1 script to sign (required).
-#   -OutputDir: Directory to save certificate files (.cer and .pfx) (default: script's directory).
+#   -OutputDir: Directory to save the certificate file (.cer, and .pfx with -ExportPfx) (default: script's directory).
+#   -ExportPfx: Also export the certificate with its private key to a password protected .pfx file, as a backup.
+#               Without it the private key cannot be exported at all.
+#   -PfxPassword: The password for the .pfx file. If -ExportPfx is given without it, you are asked for one.
 #   -SetExecutionPolicy: Switch to set execution policy to AllSigned for CurrentUser.
 #   -UseTimestamp: Switch to enable timestamping during signing (optional).
 
@@ -14,8 +22,14 @@ param(
     [ValidateScript({ Test-Path $_ -PathType Leaf })]
     [string]$ScriptPath,
 
-    [Parameter(HelpMessage = "Directory to save certificate files (.cer and .pfx).")]
+    [Parameter(HelpMessage = "Directory to save the certificate file (.cer, and .pfx with -ExportPfx).")]
     [string]$OutputDir,
+
+    [Parameter(HelpMessage = "Also export the certificate with its private key to a password protected .pfx file.")]
+    [switch]$ExportPfx,
+
+    [Parameter(HelpMessage = "Password for the .pfx file, used with -ExportPfx. Asked for if it is not given.")]
+    [System.Security.SecureString]$PfxPassword,
 
     [Parameter(HelpMessage = "Set execution policy to AllSigned for CurrentUser.")]
     [switch]$SetExecutionPolicy,
@@ -144,6 +158,9 @@ try {
     Get-ChildItem -Path Cert:\CurrentUser\My | Where-Object { $_.Subject -eq "CN=SisulateCodeSigning" } | Remove-Item -Force -ErrorAction SilentlyContinue
     Get-ChildItem -Path Cert:\CurrentUser\TrustedPublisher | Where-Object { $_.Subject -eq "CN=SisulateCodeSigning" } | Remove-Item -Force -ErrorAction SilentlyContinue
 
+    # The private key can be exported only if a .pfx was asked for
+    $keyExportPolicy = if ($ExportPfx) { 'Exportable' } else { 'NonExportable' }
+
     # Create certificate with explicit key parameters
     $cert = New-SelfSignedCertificate `
         -Subject "CN=SisulateCodeSigning" `
@@ -155,7 +172,7 @@ try {
         -KeyAlgorithm RSA `
         -KeyLength 2048 `
         -Provider "Microsoft Enhanced RSA and AES Cryptographic Provider" `
-        -KeyExportPolicy Exportable `
+        -KeyExportPolicy $keyExportPolicy `
         -KeyProtection None
 
     Write-Host "Certificate created with Thumbprint: $($cert.Thumbprint)" -ForegroundColor Green
@@ -221,17 +238,30 @@ catch {
     exit 1
 }
 
-# --- Step 3: Export Certificate with Private Key (.pfx for backup, optional) ---
-Write-Host "`nExporting certificate with private key to .pfx file..." -ForegroundColor Cyan
-$pfxPath = Join-Path -Path $OutputDir -ChildPath "SisulateCert.pfx"
-$pfxPassword = ConvertTo-SecureString -String "Sisulate2025" -Force -AsPlainText
-try {
-    Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $pfxPassword -Force | Out-Null
-    Write-Host "Certificate with private key exported to: $pfxPath" -ForegroundColor Green
-    Write-Host "Note: .pfx password is 'Sisulate2025'. Store securely." -ForegroundColor Yellow
+# --- Step 3: Export Certificate with Private Key (.pfx for backup, only if asked for) ---
+$pfxPath = $null
+if ($ExportPfx) {
+    Write-Host "`nExporting certificate with private key to .pfx file..." -ForegroundColor Cyan
+    if (-not $PfxPassword) {
+        $PfxPassword = Read-Host -Prompt "Password to protect the .pfx file" -AsSecureString
+    }
+    if ($PfxPassword.Length -eq 0) {
+        Write-Error "A .pfx file needs a password."
+        exit 1
+    }
+    $pfxPath = Join-Path -Path $OutputDir -ChildPath "SisulateCert.pfx"
+    try {
+        Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $PfxPassword -Force | Out-Null
+        Write-Host "Certificate with private key exported to: $pfxPath" -ForegroundColor Green
+        Write-Host "Keep it somewhere safe and never commit it: whoever has it and its password can sign scripts that this machine trusts." -ForegroundColor Yellow
+    }
+    catch {
+        Write-Warning "Failed to export .pfx file: $($_.Exception.Message). Continuing without .pfx."
+        $pfxPath = $null
+    }
 }
-catch {
-    Write-Warning "Failed to export .pfx file: $($_.Exception.Message). Continuing without .pfx."
+else {
+    Write-Host "`nNot exporting the private key (use -ExportPfx for a password protected .pfx backup)." -ForegroundColor Cyan
 }
 
 # --- Step 4: Trust the Certificate ---
@@ -391,7 +421,7 @@ Write-Host "`n------------------------------------------------------------------
 Write-Host "Script signing completed." -ForegroundColor Green
 Write-Host "Generated files:"
 Write-Host "  - Certificate (.cer): $cerPath"
-Write-Host "  - Certificate with private key (.pfx): $pfxPath (Password: Sisulate2025)"
+if ($pfxPath) { Write-Host "  - Certificate with private key (.pfx): $pfxPath" }
 Write-Host "Signed script: $ScriptPath"
 Write-Host "To run the script, ensure execution policy is AllSigned and the certificate is trusted."
 Write-Host "Test the script with: .\$($ScriptPath | Split-Path -Leaf) -FolderPath <YourConfigFolder>"

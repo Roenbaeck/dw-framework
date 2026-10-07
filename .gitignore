@@ -1,1 +1,5 @@
 .DS_Store
+
+# Certificates that Sign-Sisulate.ps1 creates for a machine. They belong to that machine; never commit them.
+SisulateCert.*
+*.pfx
