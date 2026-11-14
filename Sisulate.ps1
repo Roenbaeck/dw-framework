@@ -16,7 +16,10 @@ param(
     [string]$Server,
 
     [Parameter(Position = 2, HelpMessage = "Optional. Filters to run only specific parts: S=sources, T=targets, W=workflows.")]
-    [string]$Filters = "STW" # Default from the original batch file
+    [string]$Filters = "STW", # Default from the original batch file
+
+    [ValidateSet("Sisulator", "Sisula")]
+    [string]$Renderer = "Sisulator"
 )
 
 $VERSION = "2.0.3"
@@ -183,6 +186,50 @@ try {
     }
 }
 
+function Invoke-WorkflowSisula {
+    param(
+        [Jint.Engine]$Engine,
+        [string]$XmlFilePath,
+        [hashtable]$ContextVariables
+    )
+
+    $xmlDoc = [xml](Get-Content -Raw -Path $XmlFilePath -Encoding UTF8 -ErrorAction Stop)
+    $Engine.SetValue("xmlDoc", $xmlDoc) | Out-Null
+    $Engine.SetValue("variablesHashtable", $ContextVariables) | Out-Null
+    try {
+        $Engine.Execute("var workflowBindingsJson = workflowBindings();") | Out-Null
+        $directive = Join-Path $PSScriptRoot "workflow.sisula.directive"
+        $entries = @(Get-Content -Path $directive -Encoding UTF8 -ErrorAction Stop |
+            Where-Object { $_.Trim() -and -not $_.Trim().StartsWith("#") })
+        if ($entries.Count -eq 0) { throw "No templates listed in '$directive'." }
+        $Engine.Execute("var workflowOutput = '';") | Out-Null
+        foreach ($entry in $entries) {
+            $templatePath = Join-Path $PSScriptRoot $entry.Trim()
+            if ([IO.Path]::GetExtension($templatePath) -ne '.sisula') {
+                throw "Expected a .sisula template in '$directive': $entry"
+            }
+            if (-not (Test-Path -LiteralPath $templatePath -PathType Leaf)) {
+                throw "Template '$templatePath' listed in '$directive' was not found."
+            }
+            $template = [IO.File]::ReadAllText($templatePath, [Text.Encoding]::UTF8)
+            $Engine.SetValue("workflowTemplate", $template) | Out-Null
+            try {
+                $Engine.Execute("workflowOutput += sisulate(workflowTemplate, workflowBindingsJson);") | Out-Null
+            }
+            catch {
+                throw "Template '$templatePath' failed: $($_.Exception.Message)"
+            }
+        }
+        $Engine.Execute(@'
+workflowOutput = workflowOutput.replace(/^\s*[\r\n]/gm, '').replace(/(\S+[^\S\n])(?:[^\S\n]+)/gm, '$1');
+'@) | Out-Null
+        return $Engine.GetValue("workflowOutput").AsString()
+    }
+    catch {
+        throw "Sisula workflow transformation failed for '$XmlFilePath': $($_.Exception.Message)"
+    }
+}
+
 #-------------------------------------------------------------------
 # Helper Function to safely write text files
 #-------------------------------------------------------------------
@@ -224,6 +271,10 @@ if (-not $PSBoundParameters.ContainsKey('FolderPath')) {
     
     # Exit the script gracefully.
     exit
+}
+
+if ($Renderer -eq "Sisula" -and $Filters.ToUpper() -match '[ST]') {
+    throw "The Sisula renderer currently supports workflows only. Use -Filters W, or use the default Sisulator renderer."
 }
 
 # --- Print Header ---
@@ -275,6 +326,25 @@ if (-not (Test-Path $sisulatorJsPath)) {
 $sisulatorJavaScript = Get-Content -Path $sisulatorJsPath -Raw -Encoding UTF8
 Write-Host "  * Executing: $sisulatorJsPath"
 $jintEngine.Execute($sisulatorJavaScript) | Out-Null
+if ($Renderer -eq "Sisula") {
+    $rendererPath = Join-Path $PSScriptRoot "code\sisula.js"
+    $jintEngine.Execute((Get-Content -Raw -Path $rendererPath -Encoding UTF8 -ErrorAction Stop)) | Out-Null
+    $prelude = @(
+        Get-Content -Raw -Path (Join-Path $PSScriptRoot "sisulets\Variables.js") -Encoding UTF8 -ErrorAction Stop
+        Get-Content -Raw -Path (Join-Path $PSScriptRoot "sisulets\workflow\Variables.js") -Encoding UTF8 -ErrorAction Stop
+        Get-Content -Raw -Path (Join-Path $PSScriptRoot "sisulets\workflow\Bindings.js") -Encoding UTF8 -ErrorAction Stop
+    ) -join "`n"
+    $jintEngine.Execute(@"
+function workflowBindings() {
+    var workflow = Sisulator.objectify(xmlDoc, MAP.Workflow).workflow;
+    workflow._xml = xmlDoc.DocumentElement.OuterXml.replace(/(\r\n|\n|\r)/g, '\n').replace(/<!--[\s\S]*?-->/g, '');
+    var VARIABLES = {};
+    var enumerator = variablesHashtable.GetEnumerator();
+    while (enumerator.MoveNext()) VARIABLES[enumerator.Current.Key] = enumerator.Current.Value;
+$prelude
+}
+"@) | Out-Null
+}
 Write-Host "  * Jint engine is configured and ready." -ForegroundColor Green
 
 
@@ -376,7 +446,12 @@ try {
             foreach ($file in (Get-ChildItem -Path $workflowsDir -Filter "*.xml")) {
                 $outputFile = Join-Path -Path $workflowsDir -ChildPath "$($file.BaseName).sql"
                 Write-Host "  * Transforming $($file.Name) -> $($outputFile.Replace($FolderPath, '...'))"
-                $result = Invoke-Sisulation -Engine $jintEngine -XmlFilePath $file.FullName -MappingType "Workflow" -DirectiveFilePath "workflow.directive" -ContextVariables $scriptContextVariables
+                if ($Renderer -eq "Sisula") {
+                    $result = Invoke-WorkflowSisula -Engine $jintEngine -XmlFilePath $file.FullName -ContextVariables $scriptContextVariables
+                }
+                else {
+                    $result = Invoke-Sisulation -Engine $jintEngine -XmlFilePath $file.FullName -MappingType "Workflow" -DirectiveFilePath "workflow.directive" -ContextVariables $scriptContextVariables
+                }
                 Write-TextFileUtf8NoBom -FilePath $outputFile -Content $result
                 $sqlFiles.Add($outputFile)
             }

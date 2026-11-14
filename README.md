@@ -43,6 +43,37 @@ The generated procedures log every run to the metadata model, together with the 
 .\Sisulate.ps1 .\Examples\Golf localhost W      # only the workflow jobs
 ```
 
+### Trying the new Sisula renderer
+
+Workflow generation can also run with the newer, declarative Sisula engine:
+
+```
+.\Sisulate.ps1 .\Examples\Golf -Filters W -Renderer Sisula
+```
+
+The default remains `Sisulator`. This is a partial, side-by-side port: source SQL,
+bulk formats, target SQL and BIML still require the original engine. The new
+renderer rejects filters containing `S` or `T` rather than silently switching
+engines. Workflow XML and variable preparation still use the existing
+objectifier and variable scripts; `sisulets/workflow/Bindings.js` resolves
+their output to JSON, and the templates listed in `workflow.sisula.directive`
+render it in order. The preview does not run custom scripts or templates from
+the legacy `workflow.directive`; changes to that directive must be ported
+separately. `code/sisula.js` is
+the renderer vendored from the sisula repository (commit `57b6bbe`).
+
+The bindings have `metadata` and `metadatabase` at the root and a `workflow`
+object with its resolved string properties and a `jobs` array. Each job has a
+`steps` array; jobs and steps have a `present` object whose booleans preserve
+the original JavaScript truthiness of optional attributes, including `"0"`.
+`step.command` and `workflow.escapedXml` have single quotes doubled for their
+existing SQL literals. Other attributes are not automatically SQL-escaped.
+
+Run `powershell -File tests\workflow-parity.ps1` to compare both generators on
+the example workflows and on variable, quoting and metadata cases. The
+comparison preserves whitespace inside SQL literals and identifiers while
+ignoring trailing whitespace outside them; it does not execute the SQL.
+
 The SQL files are written next to the XML they come from, the bulk format files to `formats/` and the BIML to `biml/`, and they replace any earlier ones.
 
 Before installing, the databases that `Variables.BAT` names (`SourceDatabase`, `TargetDatabase` and `MetaDatabase`) have to exist; the framework does not create them. The tables that the targets load into come from your Anchor model. The generated code also writes its log to the metadata model in the database that `MetaDatabase` names. Install that model by running the scripts in `metadata\` in numeric order in that database. The same scripts upgrade an existing installation: the [release notes](CHANGELOG.md) say when an upgrade needs them again. `stats\` holds an optional model and procedure for gathering statistics.
@@ -124,7 +155,8 @@ Based on the provided examples, here is the standard project layout:
 | Path | What it is |
 |---|---|
 | `Sisulate.ps1` | The generator and installer. |
-| `Sisulator4PS.js` | The Sisulator engine that `Sisulate.ps1` runs in Jint. |
+| `Sisulator4PS.js` | The Sisulator engine and XML objectifier that `Sisulate.ps1` runs in Jint. |
+| `code/sisula.js` | The newer Sisula renderer used by the opt-in workflow port. |
 | `source.directive`, `target.directive`, `workflow.directive`, `format.directive`, `biml.directive` | For each kind of output, the ordered list of sisulets that produce it. |
 | `sisulets/` | The sisulets, in a folder for each kind of output (`source`, `target`, `workflow`, `format`, `biml`), and the ones they share. |
 | `metadata/` | The scripts that create the metadata model, which is itself an Anchor model (`MetadataModel.xml`), with its logging and utility procedures. |
@@ -139,7 +171,7 @@ Based on the provided examples, here is the standard project layout:
 
 This framework was developed in the [sisula](https://github.com/Roenbaeck/sisula) repository, and was its `ETL` branch until 2026-09-30, when it moved here with its history and tags.
 
-The Sisulator in this repository is the original dialect of Sisula: a sisulet is JavaScript with embedded text templates, translated to JavaScript with regular expressions and then run. The sisula repository now holds a different template language of the same name, declarative and driven by JSON, with a reference renderer and a set of conformance tests. The two are not interchangeable, and this framework does not use the newer one. Whenever this document says Sisula or the Sisulator, it means the one described here.
+The Sisulator in this repository is the original dialect of Sisula: a sisulet is JavaScript with embedded text templates, translated to JavaScript with regular expressions and then run. The sisula repository now holds a different template language of the same name, declarative and driven by JSON, with a reference renderer and a set of conformance tests. The two are not interchangeable. The newer renderer is available for workflows as an opt-in preview; the reference below describes the original Sisulator.
 
 ## License
 
