@@ -1,0 +1,62 @@
+$/ foreach part in source.parts
+-- Dropping table to enforce Deferred Name Resolution: $part.qualified$_Typed
+IF Object_ID('$sourceSchema$.$part.qualified$_Typed', 'U') IS NOT NULL
+DROP TABLE [$sourceSchema$].[$part.qualified$_Typed];
+$/ endfor
+IF Object_ID('$sourceSchema$.$source.qualified$_CreateTypedTables', 'P') IS NOT NULL
+DROP PROCEDURE [$sourceSchema$].[$source.qualified$_CreateTypedTables];
+GO
+
+--------------------------------------------------------------------------
+-- Procedure: $source.qualified$_CreateTypedTables
+--
+-- The typed tables hold the data that make it through the process
+-- without errors. Columns here have the data types defined in the
+-- source XML definition.
+--
+-- Metadata columns, such as _id, can be used to backtrack from
+-- a value to the actual row from where it came.
+--
+$/ foreach part in source.parts
+-- Create: $part.qualified$_Typed
+$/ endfor
+--
+-- Generated: $generated$ by $username$
+-- From: $computer$ in the $domain$ domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [$sourceSchema$].[$source.qualified$_CreateTypedTables] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+$sourceMeta.beginTyped$
+$/ foreach part in source.parts
+    IF Object_ID('$sourceSchema$.$part.qualified$_Typed', 'U') IS NOT NULL
+    DROP TABLE [$sourceSchema$].[$part.qualified$_Typed];
+
+    CREATE TABLE [$sourceSchema$].[$part.qualified$_Typed] (
+        _id int not null,
+        _file AS metadata_CO_ID, -- keep an alias for backwards compatibility
+        metadata_CO_ID int not null,
+        metadata_JB_ID int not null,
+        _timestamp datetime not null default $timestamp$,
+$/ foreach key in part.keys
+        _$key.name$ as cast(HashBytes('MD5', $key.concat$) as varbinary(16)),
+$/ endfor
+$/ foreach term in part.terms
+        [$term.name$] $term.format$ $term.nullable$$/ if not term.last() or part.hasCalculations ,$/ endif
+$/ endfor
+$/ foreach calculation in part.calculations
+$/ if calculation.hasExpression
+        [$calculation.name$] as CAST($calculation.expression$ AS $calculation.format$) $calculation.persisted$$/ if not calculation.last() ,$/ endif
+$/ else
+        [$calculation.name$] $calculation.format$ $calculation.nullable$$/ if not calculation.last() ,$/ endif
+$/ endif
+$/ endfor
+    );
+$/ endfor
+$sourceMeta.end$
+END
+GO

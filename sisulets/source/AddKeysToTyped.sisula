@@ -1,0 +1,52 @@
+IF Object_ID('$sourceSchema$.$source.qualified$_AddKeysToTyped', 'P') IS NOT NULL
+DROP PROCEDURE [$sourceSchema$].[$source.qualified$_AddKeysToTyped];
+GO
+
+--------------------------------------------------------------------------
+-- Procedure: $source.qualified$_AddKeysToTyped
+--
+-- This procedure adds keys defined in the source xml definition to the
+-- typed staging tables. Keys boost performance when loading is made
+-- using MERGE statements on the target with a search condition that
+-- matches the key composition. Primary keys also guarantee uniquness
+-- among its values.
+--
+$/ foreach part in source.parts
+$/ if part.keys
+-- Table: $part.qualified$_Typed
+$/ foreach key in part.keys
+$/ foreach component in key.components
+-- Key: $component.of$ (as $key.type$)
+$/ endfor
+$/ endfor
+$/ endif
+$/ endfor
+--
+-- Generated: $generated$ by $username$
+-- From: $computer$ in the $domain$ domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [$sourceSchema$].[$source.qualified$_AddKeysToTyped] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+$sourceMeta.beginAddKeys$
+$/ foreach part in source.parts
+$/ if part.keys
+    IF Object_ID('$sourceSchema$.$part.qualified$_Typed', 'U') IS NOT NULL
+    ALTER TABLE [$sourceSchema$].[$part.qualified$_Typed]
+    ADD
+$/ foreach key in part.keys
+        CONSTRAINT [$sourceSchema$_$key.name$_$part.qualified$_Typed] $key.type$ (
+$/ foreach component in key.components
+            [$component.of$]$/ if not component.last() ,$/ endif
+$/ endfor
+        )$/ if key.last() ;$/ else ,$/ endif
+$/ endfor
+$/ endif
+$/ endfor
+$sourceMeta.end$
+END
+GO

@@ -1,0 +1,62 @@
+$/ if isRegex
+-- Dropping raw table to enforce Deferred Name Resolution: $source.qualified$_Raw
+IF Object_ID('$sourceSchema$.$source.qualified$_Raw', 'U') IS NOT NULL
+DROP TABLE [$sourceSchema$].[$source.qualified$_Raw];
+
+IF Object_ID('$sourceSchema$.$source.qualified$_CreateRawTable', 'P') IS NOT NULL
+DROP PROCEDURE [$sourceSchema$].[$source.qualified$_CreateRawTable];
+GO
+
+--------------------------------------------------------------------------
+-- Procedure: $source.qualified$_CreateRawTable
+--
+-- This table holds the 'raw' loaded data.
+--
+-- row
+-- Holds a row loaded from a file.
+--
+-- _id
+-- This sequence is generated in order to keep a lineage through the
+-- staging process. If a single file has been loaded, this corresponds
+-- to the row number in the file.
+--
+-- metadata_CO_ID
+-- A number containing the file id, which either points to metadata
+-- if its used or is otherwise an incremented number per file.
+--
+-- _timestamp
+-- The time the row was created.
+--
+-- Generated: $generated$ by $username$
+-- From: $computer$ in the $domain$ domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [$sourceSchema$].[$source.qualified$_CreateRawTable] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+$sourceMeta.beginRaw$
+    IF Object_ID('$sourceSchema$.$source.qualified$_Raw', 'U') IS NOT NULL
+    DROP TABLE [$sourceSchema$].[$source.qualified$_Raw];
+
+    CREATE TABLE [$sourceSchema$].[$source.qualified$_Raw] (
+        _id int identity(1,1) not null,
+        _file AS metadata_CO_ID, -- keep an alias for backwards compatibility
+        metadata_CO_ID int not null default 0,
+        metadata_JB_ID int not null default 0,
+        _timestamp datetime not null default $timestamp$,
+$/ if isChar
+        [row] varchar($source.rowlength$),
+$/ else
+        [row] nvarchar($source.rowlength$),
+$/ endif
+        constraint [pk$sourceSchema$_$source.qualified$_Raw] primary key(
+            _id asc
+        )
+    );
+$sourceMeta.end$
+END
+GO
+$/ endif

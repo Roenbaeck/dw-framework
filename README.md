@@ -43,24 +43,38 @@ The generated procedures log every run to the metadata model, together with the 
 .\Sisulate.ps1 .\Examples\Golf localhost W      # only the workflow jobs
 ```
 
-### Trying the new Sisula renderer
+### Sisula renderer
 
-Workflow generation can also run with the newer, declarative Sisula engine:
+Workflow SQL, source SQL, bulk formats, target SQL and BIML are generated with
+the declarative Sisula engine:
 
 ```
-.\Sisulate.ps1 .\Examples\Golf -Filters W -Renderer Sisula
+.\Sisulate.ps1 .\Examples\Golf -Filters W
+.\Sisulate.ps1 .\Examples\Golf -Filters S
+.\Sisulate.ps1 .\Examples\Golf -Filters T
+.\Sisulate.ps1 .\Examples\Golf
 ```
 
-The default remains `Sisulator`. This is a partial, side-by-side port: source SQL,
-bulk formats, target SQL and BIML still require the original engine. The new
-renderer rejects filters containing `S` or `T` rather than silently switching
-engines. Workflow XML and variable preparation still use the existing
-objectifier and variable scripts; `sisulets/workflow/Bindings.js` resolves
-their output to JSON, and the templates listed in `workflow.sisula.directive`
-render it in order. The preview does not run custom scripts or templates from
-the legacy `workflow.directive`; changes to that directive must be ported
-separately. `code/sisula.js` is
-the renderer vendored from the sisula repository (commit `57b6bbe`).
+The original Sisulator template evaluator has been removed. The renderer uses
+the XML objectifier in `Objectifier4PS.js` and the existing JavaScript variable
+and helper scripts for preparation.
+For each output, `Bindings.js` prepares the data and the corresponding
+`.sisula.directive` lists the declarative templates to render in order. The
+renderer does not run custom scripts or templates from the legacy directives;
+changes to them must be ported separately. The original directives and sisulets
+remain as historical references and cannot be executed by this version.
+`-Renderer Sisula` is still accepted; `-Renderer Sisulator` is not.
+`code/sisula.js` is the renderer
+vendored from the sisula repository (commit `57b6bbe`).
+
+`Sisulate.bat` and `SisulateWSH.bat` now call the PowerShell generator. Unlike
+the old batch implementations, they do not execute `Variables.BAT`: PowerShell
+imports its simple `set name=value` lines. Batch commands, control flow and
+batch variable expansion in that file must be migrated.
+
+For compatibility, the renderer applies the legacy output cleanup, including
+replacement of the U+00A7-delimited `DOLLAR`, `SINGLE` and `QUOTED` sentinel
+strings even when they occur in input data.
 
 The bindings have `metadata` and `metadatabase` at the root and a `workflow`
 object with its resolved string properties and a `jobs` array. Each job has a
@@ -69,10 +83,24 @@ the original JavaScript truthiness of optional attributes, including `"0"`.
 `step.command` and `workflow.escapedXml` have single quotes doubled for their
 existing SQL literals. Other attributes are not automatically SQL-escaped.
 
-Run `powershell -File tests\workflow-parity.ps1` to compare both generators on
-the example workflows and on variable, quoting and metadata cases. The
-comparison preserves whitespace inside SQL literals and identifiers while
-ignoring trailing whitespace outside them; it does not execute the SQL.
+The following checks compare the example projects and representative edge
+cases against snapshots captured from the retired renderer:
+
+```
+powershell -File tests\workflow-parity.ps1
+powershell -File tests\format-parity.ps1
+powershell -File tests\target-parity.ps1
+powershell -File tests\biml-parity.ps1
+powershell -File tests\preview-only.ps1
+powershell -File tests\launchers.ps1
+```
+
+The workflow check also exercises default `STW` generation. The format check
+covers both formats and source SQL, and the clean-generation check verifies
+that all outputs generate without the legacy files. SQL
+comparisons ignore generated timestamps and trailing whitespace outside SQL
+literals and identifiers; BIML comparison preserves whitespace in
+`<DirectInput>`. These checks do not execute SQL on SQL Server or BIML in SSIS.
 
 The SQL files are written next to the XML they come from, the bulk format files to `formats/` and the BIML to `biml/`, and they replace any earlier ones.
 
@@ -137,7 +165,7 @@ Based on the provided examples, here is the standard project layout:
     *   **Generates:** SQL scripts in `workflows/` that create the corresponding SQL Server Agent Jobs.
 
 *   **`formats/` (Output)**
-    *   **Purpose:** This is an **output-only** directory. The Sisulator engine places the generated BCP (Bulk Copy Program) format files here. These XML-based format files are used by SQL Server to efficiently bulk-load data from flat files.
+    *   **Purpose:** This is an **output-only** directory. The generator places the BCP (Bulk Copy Program) format files here. These XML-based format files are used by SQL Server to efficiently bulk-load data from flat files.
     *   **Generated from:** `sources/`
 
 *   **`biml/` (Output)**
@@ -145,7 +173,7 @@ Based on the provided examples, here is the standard project layout:
     *   **Generated from:** `targets/`
 
 *   **`scripts/` (Supporting Files)**
-    *   **Purpose:** A conventional location for any external helper scripts (e.g., PowerShell `.ps1`, Python `.py`, command files `.cmd`) that are executed by the steps in your workflows. For example, a job step generated from `workflows/MainWorkflow.xml` might call `PowerShell %ProjectDirectory%\scripts\HelperScript1.ps1`. The Sisulator engine itself does not directly read this folder, but the generated artifacts often rely on it.
+    *   **Purpose:** A conventional location for any external helper scripts (e.g., PowerShell `.ps1`, Python `.py`, command files `.cmd`) that are executed by the steps in your workflows. For example, a job step generated from `workflows/MainWorkflow.xml` might call `PowerShell %ProjectDirectory%\scripts\HelperScript1.ps1`. The generator does not directly read this folder, but the generated artifacts often rely on it.
 
 *   **`Variables.BAT` (Configuration)**
     *   **Purpose:** This is the central configuration file for the entire project. It is used to define key-value pairs that control the behavior of the transformations. Common variables include database names (`SourceDatabase`, `TargetDatabase`), server names, and file paths (`WorkDataDirectory`, `ArchiveDataDirectory`). These variables are loaded into the `VARIABLES` object and are accessible in all sisulets, allowing for environment-specific configuration without changing the core transformation logic.
@@ -155,9 +183,10 @@ Based on the provided examples, here is the standard project layout:
 | Path | What it is |
 |---|---|
 | `Sisulate.ps1` | The generator and installer. |
-| `Sisulator4PS.js` | The Sisulator engine and XML objectifier that `Sisulate.ps1` runs in Jint. |
-| `code/sisula.js` | The newer Sisula renderer used by the opt-in workflow port. |
-| `source.directive`, `target.directive`, `workflow.directive`, `format.directive`, `biml.directive` | For each kind of output, the ordered list of sisulets that produce it. |
+| `Objectifier4PS.js` | The XML objectifier used by `Sisulate.ps1` in Jint. |
+| `code/sisula.js` | The declarative Sisula renderer. |
+| `source.directive`, `target.directive`, `workflow.directive`, `format.directive`, `biml.directive` | Historical directives for the retired engine; not executed. |
+| `*.sisula.directive` | Ordered declarative templates for the corresponding output. |
 | `sisulets/` | The sisulets, in a folder for each kind of output (`source`, `target`, `workflow`, `format`, `biml`), and the ones they share. |
 | `metadata/` | The scripts that create the metadata model, which is itself an Anchor model (`MetadataModel.xml`), with its logging and utility procedures. |
 | `stats/` | An optional model and procedure for gathering statistics. |
@@ -165,13 +194,13 @@ Based on the provided examples, here is the standard project layout:
 | `Examples/` | The Golf and Traffic projects. |
 | `ETL Editor.html` | A stand-alone page for editing target definitions. Open it in a browser, open a target XML file, edit the loads and their mappings, including the SQL before, the SELECT and the SQL after, and download the result. |
 | `Sign-Sisulate.ps1` | Creates a self-signed certificate for your machine and signs `Sisulate.ps1` with it, for machines that only run signed scripts. See [Requirements](#requirements). |
-| `Sisulate.bat`, `SisulateWSH.bat`, `Sisulator.hta`, `Sisulator.js` | The legacy generators, in batch, HTA and JScript. They are deprecated, and kept for as long as Windows can still run them. |
+| `Sisulate.bat`, `SisulateWSH.bat` | Compatibility launchers that call `Sisulate.ps1`. |
 
 ## Not the same as the sisula repository
 
 This framework was developed in the [sisula](https://github.com/Roenbaeck/sisula) repository, and was its `ETL` branch until 2026-09-30, when it moved here with its history and tags.
 
-The Sisulator in this repository is the original dialect of Sisula: a sisulet is JavaScript with embedded text templates, translated to JavaScript with regular expressions and then run. The sisula repository now holds a different template language of the same name, declarative and driven by JSON, with a reference renderer and a set of conformance tests. The two are not interchangeable. The newer renderer is available for workflows as an opt-in preview; the reference below describes the original Sisulator.
+The original dialect used JavaScript with embedded text templates, translated to JavaScript with regular expressions and then run. The sisula repository holds a different template language of the same name, declarative and driven by JSON, with a reference renderer and a set of conformance tests. The two are not interchangeable. The reference below describes the retired original dialect for historical purposes.
 
 ## License
 
@@ -183,7 +212,11 @@ Sisula was introduced in [Anchor Modeling](http://www.anchormodeling.com) in ord
 
 ---
 
-## Reference: the Sisulator and sisulets
+## Historical reference: the Sisulator and sisulets
+
+This section describes the retired engine and its sisulets, which are no longer
+executed by the framework. See the [declarative Sisula language reference](https://github.com/Roenbaeck/sisula/blob/master/docs/SISULA.md)
+and the `.sisula.directive` files for the current renderer.
 
 ### 1. Introduction: The Sisula Concept
 
@@ -196,7 +229,7 @@ Sisula is a hybrid ETL transformation engine that combines procedural JavaScript
 *   **XML Metadata Files:** The input data describing sources, targets, or workflows.
 *   **Sisulet Files (`.js`):** The building blocks of a transformation. These can contain either pure JavaScript logic or text templates.
 *   **Directive Files (`.directive`):** A manifest file that lists, in order, all sisulet files required for a specific transformation (e.g., generating a source loading procedure).
-*   **The Sisulator Engine:** The core logic (in `Sisulator4PS.js`, which `Sisulate.ps1` runs in Jint; `Sisulator.js` is the legacy JScript version) that parses input, manages context, processes sisulets, and generates the final output.
+*   **The Sisulator Engine:** The retired logic that parsed input, managed context, processed sisulets, and generated the final output. Its implementations are available in the repository's history.
 
 ---
 

@@ -1,0 +1,95 @@
+IF Object_ID('$sourceSchema$.$source.qualified$_SplitRawIntoTyped', 'P') IS NOT NULL
+DROP PROCEDURE [$sourceSchema$].[$source.qualified$_SplitRawIntoTyped];
+GO
+
+--------------------------------------------------------------------------
+-- Procedure: $source.qualified$_SplitRawIntoTyped
+--
+-- This procedure loads data from the 'Split' views into the 'Typed'
+-- tables, with the condition that data must conform to the given
+-- data types and have no duplicates for defined keys.
+--
+$/ foreach part in source.parts
+-- Load: $part.qualified$_Split into $part.qualified$_Typed
+$/ endfor
+--
+-- Generated: $generated$ by $username$
+-- From: $computer$ in the $domain$ domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [$sourceSchema$].[$source.qualified$_SplitRawIntoTyped] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+DECLARE @JB_ID int;
+DECLARE @insert int;
+DECLARE @updates int;
+$sourceMeta.beginSplitRaw$
+$/ foreach part in source.parts
+    IF Object_ID('$sourceSchema$.$part.qualified$_Typed', 'U') IS NOT NULL
+    BEGIN
+$part.splitSourceToTarget$
+    INSERT INTO [$sourceSchema$].[$part.qualified$_Typed] (
+        _id,
+        metadata_CO_ID,
+        metadata_JB_ID,
+$/ foreach term in part.terms
+        [$term.name$]$/ if not term.last() ,$/ endif
+$/ endfor
+    )
+    SELECT
+        _id,
+        metadata_CO_ID,
+        metadata_JB_ID,
+$/ foreach term in part.terms
+        [$term.name$]$/ if not term.last() ,$/ endif
+$/ endfor
+    FROM
+        [$sourceSchema$].[$part.qualified$_Split]
+$/ if part.checkKeys or part.checkTypes
+    WHERE
+$/ endif
+$/ if part.checkKeys
+$/ foreach key in part.keys
+        $key.name$_Duplicate = 0
+$/ if part.checkTypes
+    AND
+$/ endif
+$/ endfor
+$/ endif
+$/ if part.checkTypes
+$/ foreach term in part.terms
+        [$term.name$_Error] is null$/ if term.last() ;$/ endif
+$/ if not term.last()
+    AND
+$/ endif
+$/ endfor
+$/ endif
+    SET @insert = @insert + @@ROWCOUNT;
+$/ if metadata
+    EXEC $metadatabase$.metadata._WorkSetInserts @workId, @operationsId, @insert;
+    SET @JB_ID = ISNULL((
+        SELECT TOP 1
+            JB_ID
+        FROM
+            $metadatabase$.metadata.lJB_Job
+        WHERE
+            JB_AID_AID_AgentJobId = @agentJobId
+    ), 0);
+
+    UPDATE [$sourceSchema$].[$part.qualified$_Typed]
+    SET
+      metadata_JB_ID = @JB_ID
+    WHERE
+      metadata_JB_ID <> @JB_ID;
+
+    SET @updates = @@ROWCOUNT;
+    EXEC $metadatabase$.metadata._WorkSetUpdates @workId, @operationsId, @updates;
+$/ endif
+    END
+$/ endfor
+$sourceMeta.end$
+END
+GO

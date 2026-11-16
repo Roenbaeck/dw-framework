@@ -1,0 +1,20 @@
+DECLARE @workId int;
+DECLARE @operationsId int;
+DECLARE @theErrorLine int;
+DECLARE @theErrorMessage varchar(555);
+DECLARE @theErrorSeverity int;
+DECLARE @theErrorState int;
+
+EXEC $database$.metadata._WorkStarting
+$/ if hasName
+    @configurationName = '$name$',
+$/ else
+    @configurationName = null,
+$/ endif
+    @configurationType = 'Source',
+    @WO_ID = @workId OUTPUT,
+    @name  = '$workName$',
+    @agentStepId = @agentStepId,
+    @agentJobId = @agentJobId
+
+BEGIN TRY

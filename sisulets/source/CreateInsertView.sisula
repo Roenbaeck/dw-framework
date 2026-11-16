@@ -1,0 +1,47 @@
+-- Dropping insert view to enforce Deferred Name Resolution: $source.qualified$_Insert
+IF Object_ID('$sourceSchema$.$source.qualified$_Insert', 'V') IS NOT NULL
+DROP VIEW [$sourceSchema$].[$source.qualified$_Insert];
+
+IF Object_ID('$sourceSchema$.$source.qualified$_CreateInsertView', 'P') IS NOT NULL
+DROP PROCEDURE [$sourceSchema$].[$source.qualified$_CreateInsertView];
+GO
+
+--------------------------------------------------------------------------
+-- Procedure: $source.qualified$_CreateInsertView
+--
+-- This view is created as exposing the single column that will be
+-- the target of the BULK INSERT operation, since it cannot insert
+-- into a table with multiple columns without a format file.
+--
+-- Generated: $generated$ by $username$
+-- From: $computer$ in the $domain$ domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [$sourceSchema$].[$source.qualified$_CreateInsertView] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+$sourceMeta.beginInsertView$
+    IF Object_ID('$sourceSchema$.$source.qualified$_Insert', 'V') IS NOT NULL
+    DROP VIEW [$sourceSchema$].[$source.qualified$_Insert];
+    EXEC('
+    CREATE VIEW [$sourceSchema$].[$source.qualified$_Insert]
+    AS
+    SELECT
+$/ if isBulk
+$/ foreach term in source.firstPart.terms
+        [$term.name$]$/ if not term.last() ,$/ endif
+$/ endfor
+    FROM
+        [$sourceSchema$].[$source.qualified$_RawSplit];
+$/ else
+        [row]
+    FROM
+        [$sourceSchema$].[$source.qualified$_Raw];
+$/ endif
+    ');
+$sourceMeta.end$
+END
+GO

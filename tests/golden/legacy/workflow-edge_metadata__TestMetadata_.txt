@@ -1,0 +1,458 @@
+------------------------------- other -------------------------------
+USE msdb;
+GO
+DECLARE @AgentJobID uniqueidentifier = (
+    select job_id from [dbo].[sysjobs] where name = 'other'
+);
+IF (@AgentJobID is null)
+BEGIN
+    EXEC sp_add_job
+        -- mandatory parameters below and optional ones above this line
+        @job_name = 'other',
+        -- capture the newly created job id
+        @job_id = @AgentJobID OUTPUT;
+    EXEC sp_add_jobserver
+        -- mandatory parameters below and optional ones above this line
+        @job_name = 'other';
+END
+ELSE
+BEGIN
+    -- deleting the magical step 0 removes all job steps (this is documented behavior)
+    EXEC sp_delete_jobstep @job_Id = @AgentJobID, @step_id = 0;
+END
+EXEC sp_add_jobstep
+    @job_id = @AgentJobID,
+    @step_name = 'Log starting of job',
+    @step_id = 1,
+    @subsystem = 'TSQL',
+    @database_name = 'TestMetadata',
+    @command = 'EXEC metadata._JobStarting @workflowName = ''other'', @jobName = ''other'', @agentJobId = $(ESCAPE_NONE(JOBID))',
+    @on_success_action = 3; -- go to the next step
+EXEC sp_add_jobstep
+    @command = 'SELECT 1',
+    -- mandatory parameters below and optional ones above this line
+    @job_id = @AgentJobID,
+    @step_name = 'only';
+EXEC sp_add_jobstep
+    @job_id = @AgentJobID,
+    @step_name = 'Log success of job',
+    @subsystem = 'TSQL',
+    @database_name = 'TestMetadata',
+    @command = 'EXEC metadata._JobStopping @name = ''other'', @status = ''Success''',
+    @on_success_action = 1; -- quit with success
+EXEC sp_add_jobstep
+    @job_id = @AgentJobID,
+    @step_name = 'Log failure of job',
+    @subsystem = 'TSQL',
+    @database_name = 'TestMetadata',
+    @command = 'EXEC metadata._JobStopping @name = ''other'', @status = ''Failure''',
+    @on_success_action = 2; -- quit with failure
+declare @log_success_step_id int = (
+    select step_id
+    from msdb.dbo.sysjobs j
+    join msdb.dbo.sysjobsteps s
+    on s.job_id = j.job_id
+    and s.step_name = 'Log success of job'
+    where j.job_id = @AgentJobID
+);
+declare @log_failure_step_id int = (
+    select step_id
+    from msdb.dbo.sysjobs j
+    join msdb.dbo.sysjobsteps s
+    on s.job_id = j.job_id
+    and s.step_name = 'Log failure of job'
+    where j.job_id = @AgentJobID
+);
+declare @step_id int = 0;
+declare @on_success_action int;
+declare @on_fail_action int;
+while @step_id is not null
+begin
+    set @step_id = null;
+    select top 1
+        @step_id = s.step_id,
+        @on_success_action = s.on_success_action,
+        @on_fail_action = s.on_fail_action
+    from msdb.dbo.sysjobs j
+    join msdb.dbo.sysjobsteps s
+    on s.job_id = j.job_id
+    and (
+        -- quit job with success (1) or fail (2)
+        s.on_success_action in (1, 2)
+     or s.on_fail_action in (1, 2)
+    )
+    and s.step_name not in (
+        'Log starting of job',
+        'Log success of job',
+        'Log failure of job'
+    )
+    where j.job_id = @AgentJobID;
+    if @step_id is not null
+    begin
+        if @on_success_action = 1
+        exec msdb.dbo.sp_update_jobstep
+            @job_id = @AgentJobID,
+            @step_id = @step_id,
+            @on_success_action = 4, -- go to step with id
+            @on_success_step_id = @log_success_step_id
+        if @on_success_action = 2
+        exec msdb.dbo.sp_update_jobstep
+            @job_id = @AgentJobID,
+            @step_id = @step_id,
+            @on_success_action = 4, -- go to step with id
+            @on_success_step_id = @log_failure_step_id
+        if @on_fail_action = 1
+        exec msdb.dbo.sp_update_jobstep
+            @job_id = @AgentJobID,
+            @step_id = @step_id,
+            @on_fail_action = 4, -- go to step with id
+            @on_fail_step_id = @log_success_step_id
+        if @on_fail_action = 2
+        exec msdb.dbo.sp_update_jobstep
+            @job_id = @AgentJobID,
+            @step_id = @step_id,
+            @on_fail_action = 4, -- go to step with id
+            @on_fail_step_id = @log_failure_step_id
+    end
+end
+GO
+-- end of job creation
+-- The workflow definition used when generating the above
+DECLARE @xml XML = N'<workflow name="other"><job name="other"><jobstep name="only">SELECT 1</jobstep></job></workflow>';
+DECLARE @name varchar(255) = @xml.value('/workflow[1]/@name', 'varchar(255)');
+DECLARE @CF_ID int;
+SELECT
+    @CF_ID = CF_ID
+FROM
+    TestMetadata.metadata.lCF_Configuration
+WHERE
+    CF_NAM_Configuration_Name = @name;
+IF(@CF_ID is null)
+BEGIN
+    INSERT INTO TestMetadata.metadata.lCF_Configuration (
+        CF_TYP_CFT_ConfigurationType,
+        CF_NAM_Configuration_Name,
+        CF_XML_Configuration_XMLDefinition
+    )
+    VALUES (
+        'Workflow',
+        @name,
+        @xml
+    );
+END
+ELSE
+BEGIN
+    UPDATE TestMetadata.metadata.lCF_Configuration
+    SET
+        CF_XML_Configuration_XMLDefinition = @xml
+    WHERE
+        CF_NAM_Configuration_Name = @name;
+END
+<WORKFLOW-END>------------------------------- Edge_workflow -------------------------------
+USE msdb;
+GO
+DECLARE @AgentJobID uniqueidentifier = (
+    select job_id from [dbo].[sysjobs] where name = 'Edge_first'
+);
+IF (@AgentJobID is null)
+BEGIN
+    EXEC sp_add_job
+        @enabled = 0,
+        @description = 'description',
+        @start_step_id = 0,
+        @category_name = 'test',
+        @category_id = 0,
+        @notify_level_eventlog = 0,
+        @notify_level_email = 0,
+        @notify_level_netsend = 0,
+        @notify_level_page = 0,
+        @notify_email_operator_name = 'email',
+        @notify_netsend_operator_name = 'netsend',
+        @notify_page_operator_name = 'page',
+        @delete_level = 0,
+        @owner_login_name = owner,
+        -- mandatory parameters below and optional ones above this line
+        @job_name = 'Edge_first',
+        -- capture the newly created job id
+        @job_id = @AgentJobID OUTPUT;
+    EXEC sp_add_jobserver
+        -- mandatory parameters below and optional ones above this line
+        @job_name = 'Edge_first';
+END
+ELSE
+BEGIN
+    -- deleting the magical step 0 removes all job steps (this is documented behavior)
+    EXEC sp_delete_jobstep @job_Id = @AgentJobID, @step_id = 0;
+END
+EXEC sp_add_jobstep
+    @job_id = @AgentJobID,
+    @step_name = 'Log starting of job',
+    @step_id = 1,
+    @subsystem = 'TSQL',
+    @database_name = 'TestMetadata',
+    @command = 'EXEC metadata._JobStarting @workflowName = ''Edge_workflow'', @jobName = ''Edge_first'', @agentJobId = $(ESCAPE_NONE(JOBID))',
+    @on_success_action = 3; -- go to the next step
+EXEC sp_add_jobstep
+    @step_id = 0,
+    @subsystem = 'TSQL',
+    @command = 'select ''job'', ''$value$'', ''O''''Brien'';',
+    @additional_parameters = 'params',
+    @cmdexec_success_code = 0,
+    @server = 'server',
+    @database_name = 'db',
+    @database_user_name = 'user',
+    @retry_attempts = 0,
+    @retry_interval = 0,
+    @os_run_priority = 0,
+    @output_file_name = 'file',
+    @flags = 0,
+    @proxy_id = 0,
+    @proxy_name = 'proxy',
+    @on_fail_action = 0,
+    @on_fail_step_id = 0,
+    @on_success_action = 3,
+    @on_success_step_id = 0,
+    -- mandatory parameters below and optional ones above this line
+    @job_id = @AgentJobID,
+    @step_name = 'one';
+EXEC sp_add_jobstep
+    @subsystem = 'PowerShell',
+    @command = 'Write-Output ''job''',
+    @flags = 0,
+    -- mandatory parameters below and optional ones above this line
+    @job_id = @AgentJobID,
+    @step_name = 'two';
+EXEC sp_add_jobstep
+    @job_id = @AgentJobID,
+    @step_name = 'Log success of job',
+    @subsystem = 'TSQL',
+    @database_name = 'TestMetadata',
+    @command = 'EXEC metadata._JobStopping @name = ''Edge_first'', @status = ''Success''',
+    @on_success_action = 1; -- quit with success
+EXEC sp_add_jobstep
+    @job_id = @AgentJobID,
+    @step_name = 'Log failure of job',
+    @subsystem = 'TSQL',
+    @database_name = 'TestMetadata',
+    @command = 'EXEC metadata._JobStopping @name = ''Edge_first'', @status = ''Failure''',
+    @on_success_action = 2; -- quit with failure
+declare @log_success_step_id int = (
+    select step_id
+    from msdb.dbo.sysjobs j
+    join msdb.dbo.sysjobsteps s
+    on s.job_id = j.job_id
+    and s.step_name = 'Log success of job'
+    where j.job_id = @AgentJobID
+);
+declare @log_failure_step_id int = (
+    select step_id
+    from msdb.dbo.sysjobs j
+    join msdb.dbo.sysjobsteps s
+    on s.job_id = j.job_id
+    and s.step_name = 'Log failure of job'
+    where j.job_id = @AgentJobID
+);
+declare @step_id int = 0;
+declare @on_success_action int;
+declare @on_fail_action int;
+while @step_id is not null
+begin
+    set @step_id = null;
+    select top 1
+        @step_id = s.step_id,
+        @on_success_action = s.on_success_action,
+        @on_fail_action = s.on_fail_action
+    from msdb.dbo.sysjobs j
+    join msdb.dbo.sysjobsteps s
+    on s.job_id = j.job_id
+    and (
+        -- quit job with success (1) or fail (2)
+        s.on_success_action in (1, 2)
+     or s.on_fail_action in (1, 2)
+    )
+    and s.step_name not in (
+        'Log starting of job',
+        'Log success of job',
+        'Log failure of job'
+    )
+    where j.job_id = @AgentJobID;
+    if @step_id is not null
+    begin
+        if @on_success_action = 1
+        exec msdb.dbo.sp_update_jobstep
+            @job_id = @AgentJobID,
+            @step_id = @step_id,
+            @on_success_action = 4, -- go to step with id
+            @on_success_step_id = @log_success_step_id
+        if @on_success_action = 2
+        exec msdb.dbo.sp_update_jobstep
+            @job_id = @AgentJobID,
+            @step_id = @step_id,
+            @on_success_action = 4, -- go to step with id
+            @on_success_step_id = @log_failure_step_id
+        if @on_fail_action = 1
+        exec msdb.dbo.sp_update_jobstep
+            @job_id = @AgentJobID,
+            @step_id = @step_id,
+            @on_fail_action = 4, -- go to step with id
+            @on_fail_step_id = @log_success_step_id
+        if @on_fail_action = 2
+        exec msdb.dbo.sp_update_jobstep
+            @job_id = @AgentJobID,
+            @step_id = @step_id,
+            @on_fail_action = 4, -- go to step with id
+            @on_fail_step_id = @log_failure_step_id
+    end
+end
+GO
+-- end of job creation
+DECLARE @AgentJobID uniqueidentifier = (
+    select job_id from [dbo].[sysjobs] where name = 'second'
+);
+IF (@AgentJobID is null)
+BEGIN
+    EXEC sp_add_job
+        -- mandatory parameters below and optional ones above this line
+        @job_name = 'second',
+        -- capture the newly created job id
+        @job_id = @AgentJobID OUTPUT;
+    EXEC sp_add_jobserver
+        -- mandatory parameters below and optional ones above this line
+        @job_name = 'second';
+END
+ELSE
+BEGIN
+    -- deleting the magical step 0 removes all job steps (this is documented behavior)
+    EXEC sp_delete_jobstep @job_Id = @AgentJobID, @step_id = 0;
+END
+EXEC sp_add_jobstep
+    @job_id = @AgentJobID,
+    @step_name = 'Log starting of job',
+    @step_id = 1,
+    @subsystem = 'TSQL',
+    @database_name = 'TestMetadata',
+    @command = 'EXEC metadata._JobStarting @workflowName = ''Edge_workflow'', @jobName = ''second'', @agentJobId = $(ESCAPE_NONE(JOBID))',
+    @on_success_action = 3; -- go to the next step
+EXEC sp_add_jobstep
+    @subsystem = 'TSQL',
+    @command = 'select ''workflow'';',
+    -- mandatory parameters below and optional ones above this line
+    @job_id = @AgentJobID,
+    @step_name = 'other';
+EXEC sp_add_jobstep
+    @job_id = @AgentJobID,
+    @step_name = 'Log success of job',
+    @subsystem = 'TSQL',
+    @database_name = 'TestMetadata',
+    @command = 'EXEC metadata._JobStopping @name = ''second'', @status = ''Success''',
+    @on_success_action = 1; -- quit with success
+EXEC sp_add_jobstep
+    @job_id = @AgentJobID,
+    @step_name = 'Log failure of job',
+    @subsystem = 'TSQL',
+    @database_name = 'TestMetadata',
+    @command = 'EXEC metadata._JobStopping @name = ''second'', @status = ''Failure''',
+    @on_success_action = 2; -- quit with failure
+declare @log_success_step_id int = (
+    select step_id
+    from msdb.dbo.sysjobs j
+    join msdb.dbo.sysjobsteps s
+    on s.job_id = j.job_id
+    and s.step_name = 'Log success of job'
+    where j.job_id = @AgentJobID
+);
+declare @log_failure_step_id int = (
+    select step_id
+    from msdb.dbo.sysjobs j
+    join msdb.dbo.sysjobsteps s
+    on s.job_id = j.job_id
+    and s.step_name = 'Log failure of job'
+    where j.job_id = @AgentJobID
+);
+declare @step_id int = 0;
+declare @on_success_action int;
+declare @on_fail_action int;
+while @step_id is not null
+begin
+    set @step_id = null;
+    select top 1
+        @step_id = s.step_id,
+        @on_success_action = s.on_success_action,
+        @on_fail_action = s.on_fail_action
+    from msdb.dbo.sysjobs j
+    join msdb.dbo.sysjobsteps s
+    on s.job_id = j.job_id
+    and (
+        -- quit job with success (1) or fail (2)
+        s.on_success_action in (1, 2)
+     or s.on_fail_action in (1, 2)
+    )
+    and s.step_name not in (
+        'Log starting of job',
+        'Log success of job',
+        'Log failure of job'
+    )
+    where j.job_id = @AgentJobID;
+    if @step_id is not null
+    begin
+        if @on_success_action = 1
+        exec msdb.dbo.sp_update_jobstep
+            @job_id = @AgentJobID,
+            @step_id = @step_id,
+            @on_success_action = 4, -- go to step with id
+            @on_success_step_id = @log_success_step_id
+        if @on_success_action = 2
+        exec msdb.dbo.sp_update_jobstep
+            @job_id = @AgentJobID,
+            @step_id = @step_id,
+            @on_success_action = 4, -- go to step with id
+            @on_success_step_id = @log_failure_step_id
+        if @on_fail_action = 1
+        exec msdb.dbo.sp_update_jobstep
+            @job_id = @AgentJobID,
+            @step_id = @step_id,
+            @on_fail_action = 4, -- go to step with id
+            @on_fail_step_id = @log_success_step_id
+        if @on_fail_action = 2
+        exec msdb.dbo.sp_update_jobstep
+            @job_id = @AgentJobID,
+            @step_id = @step_id,
+            @on_fail_action = 4, -- go to step with id
+            @on_fail_step_id = @log_failure_step_id
+    end
+end
+GO
+-- end of job creation
+-- The workflow definition used when generating the above
+DECLARE @xml XML = N'<workflow name="Edge_workflow"><variable name="v" value="workflow" /><job name="Edge_first" enabled="0" start_step_id="0" category_name="test" category_id="0" notify_level_eventlog="0" notify_level_email="0" notify_level_netsend="0" notify_level_page="0" notify_email_operator_name="email" notify_netsend_operator_name="netsend" notify_page_operator_name="page" delete_level="0" owner_login_name="owner">
+    description
+    <variable name="v" value="job" /><jobstep name="one" step_id="0" subsystem="TSQL" additional_parameters="params" cmdexec_success_code="0" server="server" database_name="db" database_user_name="user" retry_attempts="0" retry_interval="0" os_run_priority="0" output_file_name="file" flags="0" proxy_id="0" proxy_name="proxy" on_fail_action="0" on_fail_step_id="0" on_success_action="3" on_success_step_id="0">select ''workflow'', ''$value$'', ''O''''Brien'';</jobstep><jobstep name="two" subsystem="PowerShell" flags="0">Write-Output ''workflow''</jobstep></job><job name="second"><jobstep name="other" subsystem="TSQL">select ''workflow'';</jobstep></job></workflow>';
+DECLARE @name varchar(255) = @xml.value('/workflow[1]/@name', 'varchar(255)');
+DECLARE @CF_ID int;
+SELECT
+    @CF_ID = CF_ID
+FROM
+    TestMetadata.metadata.lCF_Configuration
+WHERE
+    CF_NAM_Configuration_Name = @name;
+IF(@CF_ID is null)
+BEGIN
+    INSERT INTO TestMetadata.metadata.lCF_Configuration (
+        CF_TYP_CFT_ConfigurationType,
+        CF_NAM_Configuration_Name,
+        CF_XML_Configuration_XMLDefinition
+    )
+    VALUES (
+        'Workflow',
+        @name,
+        @xml
+    );
+END
+ELSE
+BEGIN
+    UPDATE TestMetadata.metadata.lCF_Configuration
+    SET
+        CF_XML_Configuration_XMLDefinition = @xml
+    WHERE
+        CF_NAM_Configuration_Name = @name;
+END

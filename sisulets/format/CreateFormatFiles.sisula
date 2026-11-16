@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<BCPFORMAT
+xmlns="http://schemas.microsoft.com/sqlserver/2004/bulkload/format"
+   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+   <RECORD>
+$/ foreach field in format.fields
+$/ if field.fixed
+      <FIELD xsi:type="$field.type$" ID="$field.name$" LENGTH="$field.size$" />
+$/ else
+      <FIELD xsi:type="$field.type$" ID="$field.name$" TERMINATOR=$field.terminator$ />
+$/ endif
+$/ endfor
+   </RECORD>
+   <ROW>
+$/ foreach field in format.fields
+      <COLUMN SOURCE="$field.name$" NAME="$field.name$" xsi:type="$format.columnType$" />
+$/ endfor
+   </ROW>
+</BCPFORMAT>

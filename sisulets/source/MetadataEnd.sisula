@@ -1,0 +1,22 @@
+    EXEC $database$.metadata._WorkStopping @workId, 'Success';
+END TRY
+BEGIN CATCH
+	SELECT
+		@theErrorLine = ERROR_LINE(),
+		@theErrorMessage = ERROR_MESSAGE(),
+        @theErrorSeverity = ERROR_SEVERITY(),
+        @theErrorState = ERROR_STATE();
+
+    EXEC $database$.metadata._WorkStopping
+        @WO_ID = @workId,
+        @status = 'Failure',
+        @errorLine = @theErrorLine,
+        @errorMessage = @theErrorMessage;
+
+    -- Propagate the error
+    RAISERROR(
+        @theErrorMessage,
+        @theErrorSeverity,
+        @theErrorState
+    );
+END CATCH

@@ -1,0 +1,9 @@
+EXEC $database$.metadata._WorkSourceToTarget
+    @OP_ID = @operationsId OUTPUT,
+    @WO_ID = @workId,
+    @sourceName = $sourceName$,
+    @targetName = $targetName$,
+    @sourceType = $sourceType$,
+    @targetType = $targetType$,
+    @sourceCreated = $sourceCreated$,
+    @targetCreated = $targetCreated$;

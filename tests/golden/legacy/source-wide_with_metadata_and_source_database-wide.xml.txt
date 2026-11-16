@@ -1,0 +1,901 @@
+USE Stage;
+GO
+-- create schema if it does not exist
+IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'dbo')
+BEGIN
+    EXEC( 'CREATE SCHEMA dbo' );
+END
+GO
+-- creates utility functions needed in the staging
+IF Object_Id('dbo.Splitter', 'FT') IS NOT NULL
+DROP FUNCTION [dbo].[Splitter];
+GO
+IF Object_Id('dbo.MultiSplitter', 'FT') IS NOT NULL
+DROP FUNCTION [dbo].[MultiSplitter];
+GO
+IF Object_Id('dbo.ColumnSplitter', 'PC') IS NOT NULL
+DROP PROCEDURE [dbo].[ColumnSplitter];
+GO
+IF Object_Id('dbo.MultiColumnSplitter', 'PC') IS NOT NULL
+DROP PROCEDURE [dbo].[MultiColumnSplitter];
+GO
+IF Object_Id('dbo.IsType', 'FS') IS NOT NULL
+DROP FUNCTION [dbo].[IsType];
+GO
+IF Object_Id('dbo.ToLocalTime', 'FS') IS NOT NULL
+DROP FUNCTION [dbo].[ToLocalTime];
+GO
+IF Object_Id('dbo.ToUniversalTime', 'FS') IS NOT NULL
+DROP FUNCTION [dbo].[ToUniversalTime];
+GO
+-- BEGIN! LEGACY --
+IF EXISTS (
+	SELECT
+		*
+	FROM
+		sys.assemblies
+	WHERE
+		name = 'dboUtilities'
+)
+DROP ASSEMBLY dboUtilities;
+-- END! LEGACY --
+declare @version char(4) =
+	case
+		when patindex('% 2[0-2][0-9][0-9] %', @@VERSION) > 0
+		then substring(@@VERSION, patindex('% 2[0-2][0-9][0-9] %', @@VERSION) + 1, 4)
+		else '????'
+	end
+IF EXISTS (
+	SELECT
+		*
+	FROM
+		sys.assemblies
+	WHERE
+		name = 'Utilities'
+)
+BEGIN TRY
+	ALTER ASSEMBLY Utilities
+	FROM '<FRAMEWORK>\code\Utilities' + @version + '.dll'
+	WITH PERMISSION_SET = SAFE;
+	PRINT 'The .NET CLR for SQL Server ' + @version + ' was updated.';
+END TRY BEGIN CATCH
+	DECLARE @msg VARCHAR(2000) = ERROR_MESSAGE();
+	IF(PATINDEX('%identical%', @msg) > 0)
+	BEGIN
+		PRINT 'The .NET CLR for SQL Server ' + @version + ' has already been installed.';
+	END
+	ELSE
+	BEGIN TRY
+		DROP ASSEMBLY Utilities;
+	END TRY
+	BEGIN CATCH
+		PRINT ERROR_MESSAGE();
+	END CATCH
+END CATCH
+IF NOT EXISTS (
+	SELECT
+		*
+	FROM
+		sys.assemblies
+	WHERE
+		name = 'Utilities'
+)
+BEGIN TRY
+    -- since some version of 2017 assemblies must be explicitly whitelisted
+    IF(@version >= 2017 AND OBJECT_ID('sys.sp_add_trusted_assembly') IS NOT NULL)
+    BEGIN
+		CREATE TABLE #hash([hash] varbinary(64));
+		EXEC('INSERT INTO #hash SELECT CONVERT(varbinary(64), ''0x'' + H, 1) FROM OPENROWSET(BULK ''<FRAMEWORK>\code\Utilities' + @version + '.SHA512'', SINGLE_CLOB) T(H);');
+		DECLARE @hash varbinary(64);
+		SELECT @hash = [hash] FROM #hash;
+        IF NOT EXISTS(SELECT [hash] FROM sys.trusted_assemblies WHERE [hash] = @hash)
+            EXEC sys.sp_add_trusted_assembly @hash, N'Utilities';
+	END
+	CREATE ASSEMBLY Utilities
+	AUTHORIZATION dbo
+	FROM '<FRAMEWORK>\code\Utilities' + @version + '.dll'
+	WITH PERMISSION_SET = SAFE;
+	PRINT 'The .NET CLR for SQL Server ' + @version + ' was installed.'
+END TRY BEGIN CATCH
+	PRINT ERROR_MESSAGE();
+END CATCH
+GO
+CREATE FUNCTION [dbo].Splitter(@row AS nvarchar(max), @pattern AS nvarchar(4000))
+RETURNS TABLE (
+	[match] nvarchar(max),
+	[index] int
+) AS EXTERNAL NAME Utilities.Splitter.InitMethod;
+GO
+CREATE FUNCTION [dbo].MultiSplitter(@row AS nvarchar(max), @pattern AS nvarchar(4000))
+RETURNS TABLE (
+	[match] nvarchar(max),
+	[index] int,
+	[group] nvarchar(max)
+) AS EXTERNAL NAME Utilities.MultiSplitter.InitMethod;
+GO
+CREATE FUNCTION [dbo].IsType(@dataValue AS nvarchar(max), @dataType AS nvarchar(4000))
+RETURNS bit
+AS EXTERNAL NAME Utilities.IsType.InitMethod;
+GO
+CREATE FUNCTION [dbo].ToLocalTime(@sqlDatetime AS datetime)
+RETURNS datetime
+AS EXTERNAL NAME Utilities.ToLocalTime.InitMethod;
+GO
+CREATE FUNCTION [dbo].ToUniversalTime(@sqlDatetime AS datetime)
+RETURNS datetime
+AS EXTERNAL NAME Utilities.ToUniversalTime.InitMethod;
+GO
+CREATE PROCEDURE [dbo].ColumnSplitter(
+	@table AS nvarchar(4000),
+	@column AS nvarchar(4000),
+	@pattern AS nvarchar(4000),
+	@includeColumns AS nvarchar(4000) = null
+)
+AS EXTERNAL NAME Utilities.ColumnSplitter.InitMethod;
+GO
+CREATE PROCEDURE [dbo].MultiColumnSplitter(
+	@table AS nvarchar(4000),
+	@column AS nvarchar(4000),
+	@pattern AS nvarchar(4000),
+	@includeColumns AS nvarchar(4000) = null
+)
+AS EXTERNAL NAME Utilities.MultiColumnSplitter.InitMethod;
+GO
+IF NOT EXISTS (
+    SELECT value
+    FROM sys.configurations
+    WHERE name = 'clr enabled'
+      AND value = 1
+)
+BEGIN
+    EXEC sp_configure 'clr enabled', 1;
+    reconfigure with override;
+END
+GO
+-- Dropping raw split table to enforce Deferred Name Resolution: Edge_Wide_RawSplit
+IF Object_ID('dbo.Edge_Wide_RawSplit', 'U') IS NOT NULL
+DROP TABLE [dbo].[Edge_Wide_RawSplit];
+IF Object_ID('dbo.Edge_Wide_CreateRawSplitTable', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[Edge_Wide_CreateRawSplitTable];
+GO
+--------------------------------------------------------------------------
+-- Procedure: Edge_Wide_CreateRawSplitTable
+--
+-- The split table is populated by a bulk insert with a format file that
+-- split rows from the source file into columns.
+--
+-- Create: Edge_Wide_Rows_RawSplit
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[Edge_Wide_CreateRawSplitTable] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+DECLARE @workId int;
+DECLARE @operationsId int;
+DECLARE @theErrorLine int;
+DECLARE @theErrorMessage varchar(555);
+DECLARE @theErrorSeverity int;
+DECLARE @theErrorState int;
+EXEC Metadata.metadata._WorkStarting
+    @configurationName = 'Wide',
+    @configurationType = 'Source',
+    @WO_ID = @workId OUTPUT,
+    @name = 'Edge_Wide_CreateRawSplitTable',
+    @agentStepId = @agentStepId,
+    @agentJobId = @agentJobId
+BEGIN TRY
+    IF Object_ID('dbo.Edge_Wide_RawSplit', 'U') IS NOT NULL
+    DROP TABLE [dbo].[Edge_Wide_RawSplit];
+    EXEC('
+    CREATE TABLE [dbo].[Edge_Wide_RawSplit] (
+        _id int identity(1,1) not null,
+        _file AS metadata_CO_ID, -- keep an alias for backwards compatibility
+        metadata_CO_ID int not null default 0,
+        metadata_JB_ID int not null default 0,
+        _timestamp datetime not null default SYSUTCDATETIME(),
+        [Fixed] nvarchar(max),
+        [Quoted] nvarchar(max),
+        [Last] nvarchar(max),
+        constraint [pkdbo_Edge_Wide_RawSplit] primary key (
+            _id asc
+        )
+    )
+    ');
+    EXEC Metadata.metadata._WorkStopping @workId, 'Success';
+END TRY
+BEGIN CATCH
+	SELECT
+		@theErrorLine = ERROR_LINE(),
+		@theErrorMessage = ERROR_MESSAGE(),
+        @theErrorSeverity = ERROR_SEVERITY(),
+        @theErrorState = ERROR_STATE();
+    EXEC Metadata.metadata._WorkStopping
+        @WO_ID = @workId,
+        @status = 'Failure',
+        @errorLine = @theErrorLine,
+        @errorMessage = @theErrorMessage;
+    -- Propagate the error
+    RAISERROR(
+        @theErrorMessage,
+        @theErrorSeverity,
+        @theErrorState
+    );
+END CATCH
+END
+GO
+-- Dropping insert view to enforce Deferred Name Resolution: Edge_Wide_Insert
+IF Object_ID('dbo.Edge_Wide_Insert', 'V') IS NOT NULL
+DROP VIEW [dbo].[Edge_Wide_Insert];
+IF Object_ID('dbo.Edge_Wide_CreateInsertView', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[Edge_Wide_CreateInsertView];
+GO
+--------------------------------------------------------------------------
+-- Procedure: Edge_Wide_CreateInsertView
+--
+-- This view is created as exposing the single column that will be
+-- the target of the BULK INSERT operation, since it cannot insert
+-- into a table with multiple columns without a format file.
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[Edge_Wide_CreateInsertView] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+DECLARE @workId int;
+DECLARE @operationsId int;
+DECLARE @theErrorLine int;
+DECLARE @theErrorMessage varchar(555);
+DECLARE @theErrorSeverity int;
+DECLARE @theErrorState int;
+EXEC Metadata.metadata._WorkStarting
+    @configurationName = 'Wide',
+    @configurationType = 'Source',
+    @WO_ID = @workId OUTPUT,
+    @name = 'Edge_Wide_CreateInsertView',
+    @agentStepId = @agentStepId,
+    @agentJobId = @agentJobId
+BEGIN TRY
+    IF Object_ID('dbo.Edge_Wide_Insert', 'V') IS NOT NULL
+    DROP VIEW [dbo].[Edge_Wide_Insert];
+    EXEC('
+    CREATE VIEW [dbo].[Edge_Wide_Insert]
+    AS
+    SELECT
+        [Fixed],
+        [Quoted],
+        [Last]
+    FROM
+        [dbo].[Edge_Wide_RawSplit];
+    ');
+    EXEC Metadata.metadata._WorkStopping @workId, 'Success';
+END TRY
+BEGIN CATCH
+	SELECT
+		@theErrorLine = ERROR_LINE(),
+		@theErrorMessage = ERROR_MESSAGE(),
+        @theErrorSeverity = ERROR_SEVERITY(),
+        @theErrorState = ERROR_STATE();
+    EXEC Metadata.metadata._WorkStopping
+        @WO_ID = @workId,
+        @status = 'Failure',
+        @errorLine = @theErrorLine,
+        @errorMessage = @theErrorMessage;
+    -- Propagate the error
+    RAISERROR(
+        @theErrorMessage,
+        @theErrorSeverity,
+        @theErrorState
+    );
+END CATCH
+END
+GO
+IF Object_ID('dbo.Edge_Wide_BulkInsert', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[Edge_Wide_BulkInsert];
+GO
+--------------------------------------------------------------------------
+-- Procedure: Edge_Wide_BulkInsert
+--
+-- This procedure performs a BULK INSERT of the given filename into
+-- the Edge_Wide_Insert view. The file is loaded row by row
+-- into a single column holding the entire row. This ensures that no
+-- data is lost when loading.
+--
+-- This job may called multiple times in a workflow when more than
+-- one file matching a given filename pattern is found.
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[Edge_Wide_BulkInsert] (
+	@filename varchar(2000),
+    @lastModified datetime,
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+DECLARE @CO_ID int;
+DECLARE @JB_ID int;
+DECLARE @inserts int;
+DECLARE @updates int;
+DECLARE @workId int;
+DECLARE @operationsId int;
+DECLARE @theErrorLine int;
+DECLARE @theErrorMessage varchar(555);
+DECLARE @theErrorSeverity int;
+DECLARE @theErrorState int;
+EXEC Metadata.metadata._WorkStarting
+    @configurationName = 'Wide',
+    @configurationType = 'Source',
+    @WO_ID = @workId OUTPUT,
+    @name = 'Edge_Wide_BulkInsert',
+    @agentStepId = @agentStepId,
+    @agentJobId = @agentJobId
+BEGIN TRY
+EXEC Metadata.metadata._WorkSourceToTarget
+    @OP_ID = @operationsId OUTPUT,
+    @WO_ID = @workId,
+    @sourceName = @filename,
+    @targetName = 'Edge_Wide_Insert',
+    @sourceType = 'File',
+    @targetType = 'View',
+    @sourceCreated = @lastModified,
+    @targetCreated = DEFAULT;
+    IF Object_ID('dbo.Edge_Wide_Insert', 'V') IS NOT NULL
+    BEGIN
+    EXEC('
+        BULK INSERT [dbo].[Edge_Wide_Insert]
+        FROM ''' + @filename + '''
+        WITH (
+            FORMATFILE = ''<SCRATCH>\edge\formats\wide.xml'',
+            TABLOCK
+        );
+    ');
+    SET @inserts = @@ROWCOUNT;
+    EXEC Metadata.metadata._WorkSetInserts @workId, @operationsId, @inserts;
+    SET @CO_ID = ISNULL((
+        SELECT TOP 1
+            CO_ID
+        FROM
+            Metadata.metadata.lCO_Container
+        WHERE
+            CO_NAM_Container_Name = @filename
+        AND
+            CO_CRE_Container_Created = @lastModified
+    ), 0);
+    SET @JB_ID = ISNULL((
+        SELECT
+            jb.JB_ID
+        FROM
+            Metadata.metadata.lWO_part_JB_of wojb
+        JOIN
+            Metadata.metadata.lJB_Job jb
+        ON
+            jb.JB_ID = wojb.JB_ID_of
+        AND
+            jb.JB_AID_AID_AgentJobId = @agentJobId
+        WHERE
+            wojb.WO_ID_part = @workId
+    ), 0);
+    UPDATE [dbo].[Edge_Wide_RawSplit]
+    SET
+        metadata_CO_ID =
+          case when metadata_CO_ID = 0 then @CO_ID else metadata_CO_ID end,
+        metadata_JB_ID =
+          case when metadata_JB_ID = 0 then @JB_ID else metadata_JB_ID end;
+    SET @updates = @@ROWCOUNT;
+    EXEC Metadata.metadata._WorkSetUpdates @workId, @operationsId, @updates;
+    END
+    EXEC Metadata.metadata._WorkStopping @workId, 'Success';
+END TRY
+BEGIN CATCH
+	SELECT
+		@theErrorLine = ERROR_LINE(),
+		@theErrorMessage = ERROR_MESSAGE(),
+        @theErrorSeverity = ERROR_SEVERITY(),
+        @theErrorState = ERROR_STATE();
+    EXEC Metadata.metadata._WorkStopping
+        @WO_ID = @workId,
+        @status = 'Failure',
+        @errorLine = @theErrorLine,
+        @errorMessage = @theErrorMessage;
+    -- Propagate the error
+    RAISERROR(
+        @theErrorMessage,
+        @theErrorSeverity,
+        @theErrorState
+    );
+END CATCH
+END
+GO
+-- Dropping split view to enforce Deferred Name Resolution: Edge_Wide_Rows_Split
+IF Object_ID('dbo.Edge_Wide_Rows_Split', 'V') IS NOT NULL
+DROP VIEW [dbo].[Edge_Wide_Rows_Split];
+IF Object_ID('dbo.Edge_Wide_CreateSplitViews', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[Edge_Wide_CreateSplitViews];
+GO
+--------------------------------------------------------------------------
+-- Procedure: Edge_Wide_CreateSplitViews
+--
+-- The split view uses a CLR called the Splitter to split rows in the
+-- 'raw' table into columns. The Splitter uses a regular expression in
+-- which groups indicate which parts should be cut out as columns.
+--
+-- The view also checks data types and provide the results as well as
+-- show the 'raw' cut column value, before any given transformations
+-- have taken place.
+--
+-- If keys are defined, these keys are checked for duplicates and the
+-- duplicate number can be found through the view.
+--
+-- Create: Edge_Wide_Rows_Split
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[Edge_Wide_CreateSplitViews] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+DECLARE @workId int;
+DECLARE @operationsId int;
+DECLARE @theErrorLine int;
+DECLARE @theErrorMessage varchar(555);
+DECLARE @theErrorSeverity int;
+DECLARE @theErrorState int;
+EXEC Metadata.metadata._WorkStarting
+    @configurationName = 'Wide',
+    @configurationType = 'Source',
+    @WO_ID = @workId OUTPUT,
+    @name = 'Edge_Wide_CreateSplitViews',
+    @agentStepId = @agentStepId,
+    @agentJobId = @agentJobId
+BEGIN TRY
+    IF Object_ID('dbo.Edge_Wide_Rows_Split', 'V') IS NOT NULL
+    DROP VIEW [dbo].[Edge_Wide_Rows_Split];
+    EXEC('
+    CREATE VIEW [dbo].[Edge_Wide_Rows_Split]
+    AS
+    SELECT
+        t._id,
+        t.metadata_CO_ID,
+        t.metadata_JB_ID,
+        t._timestamp,
+        m.[Fixed] as [Fixed_Match],
+        t.[Fixed],
+        CASE
+            WHEN t.[Fixed] is not null AND [dbo].IsType(t.[Fixed], ''varchar(4)'') = 0 THEN ''Conversion to varchar(4) failed''
+        END AS [Fixed_Error],
+        m.[Quoted] as [Quoted_Match],
+        t.[Quoted],
+        CASE
+            WHEN t.[Quoted] is not null AND [dbo].IsType(t.[Quoted], ''varchar(20)'') = 0 THEN ''Conversion to varchar(20) failed''
+        END AS [Quoted_Error],
+        m.[Last] as [Last_Match],
+        t.[Last],
+        CASE
+            WHEN t.[Last] is not null AND [dbo].IsType(t.[Last], ''varchar(20)'') = 0 THEN ''Conversion to varchar(20) failed''
+        END AS [Last_Error]
+    FROM (
+        SELECT
+            _id,
+            metadata_CO_ID,
+            metadata_JB_ID,
+            _timestamp,
+			NULLIF([Fixed], '''') AS [Fixed],
+			NULLIF([Quoted], '''') AS [Quoted],
+			NULLIF([Last], '''') AS [Last]
+        FROM 
+            [dbo].[Edge_Wide_RawSplit]
+    ) m
+    CROSS APPLY (
+        SELECT
+            _id,
+            metadata_CO_ID,
+            metadata_JB_ID,
+            _timestamp,
+            [Fixed] AS [Fixed],
+            [Quoted] AS [Quoted],
+            [Last] AS [Last]
+    ) t;
+    ');
+    EXEC Metadata.metadata._WorkStopping @workId, 'Success';
+END TRY
+BEGIN CATCH
+	SELECT
+		@theErrorLine = ERROR_LINE(),
+		@theErrorMessage = ERROR_MESSAGE(),
+        @theErrorSeverity = ERROR_SEVERITY(),
+        @theErrorState = ERROR_STATE();
+    EXEC Metadata.metadata._WorkStopping
+        @WO_ID = @workId,
+        @status = 'Failure',
+        @errorLine = @theErrorLine,
+        @errorMessage = @theErrorMessage;
+    -- Propagate the error
+    RAISERROR(
+        @theErrorMessage,
+        @theErrorSeverity,
+        @theErrorState
+    );
+END CATCH
+END
+GO
+-- Dropping error view to enforce Deferred Name Resolution: Edge_Wide_Rows_Error
+IF Object_ID('dbo.Edge_Wide_Rows_Error', 'V') IS NOT NULL
+DROP VIEW [dbo].[Edge_Wide_Rows_Error];
+IF Object_ID('dbo.Edge_Wide_CreateErrorViews', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[Edge_Wide_CreateErrorViews];
+GO
+--------------------------------------------------------------------------
+-- Procedure: Edge_Wide_CreateErrorViews
+--
+-- The created error views can be used to find rows that have errors of
+-- the following kinds:
+--
+-- Type casting errors
+-- These errors occur when a value cannot be cast to its designated
+-- datatype, for example when trying to cast 'A' to an int.
+--
+-- Key duplicate errors
+-- These errors occur when a primary key is defined and duplicates of
+-- that key is found in the tables.
+--
+-- Create: Edge_Wide_Rows_Error
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[Edge_Wide_CreateErrorViews] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+DECLARE @workId int;
+DECLARE @operationsId int;
+DECLARE @theErrorLine int;
+DECLARE @theErrorMessage varchar(555);
+DECLARE @theErrorSeverity int;
+DECLARE @theErrorState int;
+EXEC Metadata.metadata._WorkStarting
+    @configurationName = 'Wide',
+    @configurationType = 'Source',
+    @WO_ID = @workId OUTPUT,
+    @name = 'Edge_Wide_CreateInsertView',
+    @agentStepId = @agentStepId,
+    @agentJobId = @agentJobId
+BEGIN TRY
+    IF Object_ID('dbo.Edge_Wide_Rows_Error', 'V') IS NOT NULL
+    DROP VIEW [dbo].[Edge_Wide_Rows_Error];
+    EXEC('
+    CREATE VIEW [dbo].[Edge_Wide_Rows_Error] 
+    AS
+    SELECT
+        *
+    FROM
+        [dbo].[Edge_Wide_Rows_Split]
+    WHERE
+        [Fixed_Error] is not null
+    OR
+        [Quoted_Error] is not null
+    OR
+        [Last_Error] is not null;
+    ');
+    EXEC Metadata.metadata._WorkStopping @workId, 'Success';
+END TRY
+BEGIN CATCH
+	SELECT
+		@theErrorLine = ERROR_LINE(),
+		@theErrorMessage = ERROR_MESSAGE(),
+        @theErrorSeverity = ERROR_SEVERITY(),
+        @theErrorState = ERROR_STATE();
+    EXEC Metadata.metadata._WorkStopping
+        @WO_ID = @workId,
+        @status = 'Failure',
+        @errorLine = @theErrorLine,
+        @errorMessage = @theErrorMessage;
+    -- Propagate the error
+    RAISERROR(
+        @theErrorMessage,
+        @theErrorSeverity,
+        @theErrorState
+    );
+END CATCH
+END
+GO
+-- Dropping table to enforce Deferred Name Resolution: Edge_Wide_Rows_Typed
+IF Object_ID('dbo.Edge_Wide_Rows_Typed', 'U') IS NOT NULL
+DROP TABLE [dbo].[Edge_Wide_Rows_Typed];
+IF Object_ID('dbo.Edge_Wide_CreateTypedTables', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[Edge_Wide_CreateTypedTables];
+GO
+--------------------------------------------------------------------------
+-- Procedure: Edge_Wide_CreateTypedTables
+--
+-- The typed tables hold the data that make it through the process
+-- without errors. Columns here have the data types defined in the
+-- source XML definition.
+--
+-- Metadata columns, such as _id, can be used to backtrack from
+-- a value to the actual row from where it came.
+--
+-- Create: Edge_Wide_Rows_Typed
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[Edge_Wide_CreateTypedTables] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+DECLARE @workId int;
+DECLARE @operationsId int;
+DECLARE @theErrorLine int;
+DECLARE @theErrorMessage varchar(555);
+DECLARE @theErrorSeverity int;
+DECLARE @theErrorState int;
+EXEC Metadata.metadata._WorkStarting
+    @configurationName = 'Wide',
+    @configurationType = 'Source',
+    @WO_ID = @workId OUTPUT,
+    @name = 'Edge_Wide_CreateTypedTables',
+    @agentStepId = @agentStepId,
+    @agentJobId = @agentJobId
+BEGIN TRY
+    IF Object_ID('dbo.Edge_Wide_Rows_Typed', 'U') IS NOT NULL
+    DROP TABLE [dbo].[Edge_Wide_Rows_Typed];
+    CREATE TABLE [dbo].[Edge_Wide_Rows_Typed] (
+        _id int not null,
+        _file AS metadata_CO_ID, -- keep an alias for backwards compatibility
+        metadata_CO_ID int not null,
+        metadata_JB_ID int not null,
+        _timestamp datetime not null default SYSUTCDATETIME(),
+        [Fixed] varchar(4) null,
+        [Quoted] varchar(20) null,
+        [Last] varchar(20) null
+    );
+    EXEC Metadata.metadata._WorkStopping @workId, 'Success';
+END TRY
+BEGIN CATCH
+	SELECT
+		@theErrorLine = ERROR_LINE(),
+		@theErrorMessage = ERROR_MESSAGE(),
+        @theErrorSeverity = ERROR_SEVERITY(),
+        @theErrorState = ERROR_STATE();
+    EXEC Metadata.metadata._WorkStopping
+        @WO_ID = @workId,
+        @status = 'Failure',
+        @errorLine = @theErrorLine,
+        @errorMessage = @theErrorMessage;
+    -- Propagate the error
+    RAISERROR(
+        @theErrorMessage,
+        @theErrorSeverity,
+        @theErrorState
+    );
+END CATCH
+END
+GO
+IF Object_ID('dbo.Edge_Wide_SplitRawIntoTyped', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[Edge_Wide_SplitRawIntoTyped];
+GO
+--------------------------------------------------------------------------
+-- Procedure: Edge_Wide_SplitRawIntoTyped
+--
+-- This procedure loads data from the 'Split' views into the 'Typed'
+-- tables, with the condition that data must conform to the given
+-- data types and have no duplicates for defined keys.
+--
+-- Load: Edge_Wide_Rows_Split into Edge_Wide_Rows_Typed
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[Edge_Wide_SplitRawIntoTyped] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+DECLARE @JB_ID int;
+DECLARE @insert int;
+DECLARE @updates int;
+DECLARE @workId int;
+DECLARE @operationsId int;
+DECLARE @theErrorLine int;
+DECLARE @theErrorMessage varchar(555);
+DECLARE @theErrorSeverity int;
+DECLARE @theErrorState int;
+EXEC Metadata.metadata._WorkStarting
+    @configurationName = 'Wide',
+    @configurationType = 'Source',
+    @WO_ID = @workId OUTPUT,
+    @name = 'Edge_Wide_SplitRawIntoTyped',
+    @agentStepId = @agentStepId,
+    @agentJobId = @agentJobId
+BEGIN TRY
+    IF Object_ID('dbo.Edge_Wide_Rows_Typed', 'U') IS NOT NULL
+    BEGIN
+EXEC Metadata.metadata._WorkSourceToTarget
+    @OP_ID = @operationsId OUTPUT,
+    @WO_ID = @workId,
+    @sourceName = 'Edge_Wide_Rows_Split',
+    @targetName = 'Edge_Wide_Rows_Typed',
+    @sourceType = 'View',
+    @targetType = 'Table',
+    @sourceCreated = DEFAULT,
+    @targetCreated = DEFAULT;
+    INSERT INTO [dbo].[Edge_Wide_Rows_Typed] (
+        _id,
+        metadata_CO_ID,
+        metadata_JB_ID,
+        [Fixed],
+        [Quoted],
+        [Last]
+    )
+    SELECT
+        _id,
+        metadata_CO_ID,
+        metadata_JB_ID,
+        [Fixed],
+        [Quoted],
+        [Last]
+    FROM
+        [dbo].[Edge_Wide_Rows_Split]
+    WHERE
+        [Fixed_Error] is null
+    AND
+        [Quoted_Error] is null
+    AND
+        [Last_Error] is null;
+    SET @insert = @insert + @@ROWCOUNT;
+    EXEC Metadata.metadata._WorkSetInserts @workId, @operationsId, @insert;
+    SET @JB_ID = ISNULL((
+        SELECT TOP 1
+            JB_ID
+        FROM
+            Metadata.metadata.lJB_Job
+        WHERE
+            JB_AID_AID_AgentJobId = @agentJobId
+    ), 0);
+    UPDATE [dbo].[Edge_Wide_Rows_Typed]
+    SET
+      metadata_JB_ID = @JB_ID
+    WHERE
+      metadata_JB_ID <> @JB_ID;
+    SET @updates = @@ROWCOUNT;
+    EXEC Metadata.metadata._WorkSetUpdates @workId, @operationsId, @updates;
+    END
+    EXEC Metadata.metadata._WorkStopping @workId, 'Success';
+END TRY
+BEGIN CATCH
+	SELECT
+		@theErrorLine = ERROR_LINE(),
+		@theErrorMessage = ERROR_MESSAGE(),
+        @theErrorSeverity = ERROR_SEVERITY(),
+        @theErrorState = ERROR_STATE();
+    EXEC Metadata.metadata._WorkStopping
+        @WO_ID = @workId,
+        @status = 'Failure',
+        @errorLine = @theErrorLine,
+        @errorMessage = @theErrorMessage;
+    -- Propagate the error
+    RAISERROR(
+        @theErrorMessage,
+        @theErrorSeverity,
+        @theErrorState
+    );
+END CATCH
+END
+GO
+IF Object_ID('dbo.Edge_Wide_AddKeysToTyped', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[Edge_Wide_AddKeysToTyped];
+GO
+--------------------------------------------------------------------------
+-- Procedure: Edge_Wide_AddKeysToTyped
+--
+-- This procedure adds keys defined in the source xml definition to the
+-- typed staging tables. Keys boost performance when loading is made
+-- using MERGE statements on the target with a search condition that
+-- matches the key composition. Primary keys also guarantee uniquness
+-- among its values.
+--
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[Edge_Wide_AddKeysToTyped] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+DECLARE @workId int;
+DECLARE @operationsId int;
+DECLARE @theErrorLine int;
+DECLARE @theErrorMessage varchar(555);
+DECLARE @theErrorSeverity int;
+DECLARE @theErrorState int;
+EXEC Metadata.metadata._WorkStarting
+    @configurationName = 'Wide',
+    @configurationType = 'Source',
+    @WO_ID = @workId OUTPUT,
+    @name = 'Edge_Wide_AddKeysToTyped',
+    @agentStepId = @agentStepId,
+    @agentJobId = @agentJobId
+BEGIN TRY
+    EXEC Metadata.metadata._WorkStopping @workId, 'Success';
+END TRY
+BEGIN CATCH
+	SELECT
+		@theErrorLine = ERROR_LINE(),
+		@theErrorMessage = ERROR_MESSAGE(),
+        @theErrorSeverity = ERROR_SEVERITY(),
+        @theErrorState = ERROR_STATE();
+    EXEC Metadata.metadata._WorkStopping
+        @WO_ID = @workId,
+        @status = 'Failure',
+        @errorLine = @theErrorLine,
+        @errorMessage = @theErrorMessage;
+    -- Propagate the error
+    RAISERROR(
+        @theErrorMessage,
+        @theErrorSeverity,
+        @theErrorState
+    );
+END CATCH
+END
+GO
+-- The source definition used when generating the above
+DECLARE @xml XML = N'<source name="Wide" split="bulk" datafiletype="widechar" fieldterminator="END"><part name="Rows"><term name="Fixed" size="4" format="varchar(4)" /><term name="Quoted" delimiter="&quot;" format="varchar(20)" /><term name="Last" delimiter="|" format="varchar(20)" /></part></source>';
+DECLARE @name varchar(255) = @xml.value('/source[1]/@name', 'varchar(255)');
+DECLARE @CF_ID int;
+SELECT
+    @CF_ID = CF_ID
+FROM
+    Metadata.metadata.lCF_Configuration
+WHERE
+    CF_NAM_Configuration_Name = @name;
+IF(@CF_ID is null)
+BEGIN
+    INSERT INTO Metadata.metadata.lCF_Configuration (
+        CF_TYP_CFT_ConfigurationType,
+        CF_NAM_Configuration_Name,
+        CF_XML_Configuration_XMLDefinition
+    )
+    VALUES (
+        'Source',
+        @name,
+        @xml
+    );
+END
+ELSE
+BEGIN
+    UPDATE Metadata.metadata.lCF_Configuration
+    SET
+        CF_XML_Configuration_XMLDefinition = @xml
+    WHERE
+        CF_NAM_Configuration_Name = @name;
+END

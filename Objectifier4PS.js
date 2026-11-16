@@ -1,5 +1,4 @@
-// Sisulator.js - V5 (Correct Final Version)
-console.log('Starting up the sisulator...');
+// XML mapping and objectification for the PowerShell host.
 
 function getAttribute(fragment, attribute) {
     var attr = fragment.Attributes.GetNamedItem(attribute);
@@ -57,7 +56,7 @@ var MAP = {
     }}
 };
 
-var Sisulator = {
+var Objectifier = {
     objectify: function(xml, map) {
         var listSuffix = 's';
 
@@ -106,80 +105,6 @@ var Sisulator = {
         var result = {};
         objectifier(xml.DocumentElement, map, result);
         return result;
-    },
-    sisulate: function() {
-        // console.log('Mapping type: ' + mappingType);
-        // console.log('XML document: ' + xmlDoc);
-
-        // It reads its dependencies from the global scope, where PowerShell set them.
-        var map = MAP[mappingType];
-        var xml = xmlDoc;
-
-        var jsonObject = Sisulator.objectify(xml, map);
-
-        if (jsonObject[map.root]) {
-            var rawXmlString = xml.DocumentElement.OuterXml;
-            jsonObject[map.root]._xml = rawXmlString.replace(/(\r\n|\n|\r)/g, '\n').replace(/<!--[\s\S]*?-->/g, ''); 
-        }
-
-        // 1. Create a NEW object for the execution context.
-        var executionContext = {};
-
-        // 2. Manually create a shallow copy of the global VARIABLES.
-        var VARIABLES = {};
-        var enumerator = variablesHashtable.GetEnumerator();
-        while (enumerator.MoveNext()) {
-            var key = enumerator.Current.Key;
-            var value = enumerator.Current.Value;            
-            VARIABLES[key] = value;
-        }
-        
-        // 3. Add the objectified XML root to the new context.
-        executionContext[map.root] = jsonObject[map.root];
-
-        var functionBody = "var _sisula_ = '';\n";
-        var sisulets = directiveContent.split(/\/\*~|~\*\//g);
-
-        // Explicitly process BOTH pure code (even indices) and templates (odd indices)
-        for (var i = 0; i < sisulets.length; i++) {
-            var scriptPart = sisulets[i];
-            if (!scriptPart) continue; // Skip empty parts
-
-            if (i % 2 === 0) {
-                // This is PURE JAVASCRIPT (like Helpers.js). Append it directly.
-                functionBody += scriptPart;
-            } else {
-                // This is a TEMPLATE block. Transform it into string-building code.
-                scriptPart = scriptPart.replace(/[$]{2}/g, '§DOLLAR§').replace(/["]{2}/g, '§DOUBLE§').replace(/["]{1}/g, '§SINGLE§');
-                scriptPart = scriptPart.replace(/[$]{([\S\s]*?)}[$]/g, '" + ' + '$1' + ' + "');
-                scriptPart = scriptPart.replace(/[$]\(([\S\s]*?)\)\?[^\S\n]*([^:\n]*)[:]?[^\S\n]*(.*)/g, '" + (' + '$1' + ' ? "' + '$2' + '" : "' + '$3' + '") + "');
-                scriptPart = scriptPart.replace(/[\$]([\w.]*?)(?:([\$])|([^\w.]|$))/g, '" + (' + '$1' + ' ? ' + '$1' + ' : "") + "' + '$3');
-                
-                // Escape newlines and wrap the entire block in quotes
-                scriptPart = '"' + scriptPart.replace(/(\r\n|\n|\r)/g, '\\n') + '"';
-
-                // Add it to the output variable _sisula_
-                functionBody += '_sisula_ += ' + scriptPart + ';\n';
-            }
-        }
-        
-        functionBody += "return _sisula_;\n";
-
-        var argNames = Object.keys(executionContext);
-        var argValues = argNames.map(function(name) { return executionContext[name]; });        
-
-        try {
-            var sandboxedFunction = new (Function.prototype.bind.apply(Function, [null].concat(argNames, functionBody)));
-            var output = sandboxedFunction.apply(null, argValues);
-            output = output.replace(/§DOLLAR§/g, '$').replace(/§SINGLE§/g, '\"').replace(/§QUOTED§/g, '"');
-            output = output.replace(/^\s*[\r\n]/gm, '').replace(/(\S+[^\S\n])(?:[^\S\n]+)/gm, '$1');
-            return output;
-        } catch(e) {
-            throw new Error(
-                "Template Execution Error: " + e.message + 
-                "\nFunction Body (first 500 chars):\n" + functionBody.substring(0, 500)
-            );
-        }
     }
 };
 

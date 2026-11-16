@@ -1,0 +1,27 @@
+name: Generation regression
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  generation:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check legacy snapshots and launchers
+        shell: powershell
+        run: |
+          $tests = @(
+            'workflow-parity.ps1',
+            'format-parity.ps1',
+            'target-parity.ps1',
+            'biml-parity.ps1',
+            'preview-only.ps1',
+            'launchers.ps1'
+          )
+          foreach ($test in $tests) {
+            & powershell -NoProfile -File (Join-Path $PWD "tests\$test")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }

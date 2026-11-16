@@ -1,0 +1,244 @@
+$/ if hasSourceDatabase
+USE $sourceDatabase$;
+GO
+$/ endif
+$/ foreach load in target.loads
+IF Object_ID('$sourceSchema$.$load.qualified$', 'P') IS NOT NULL
+DROP PROCEDURE [$sourceSchema$].[$load.qualified$];
+GO
+--------------------------------------------------------------------------
+-- Procedure: $load.qualified$
+-- Source:    $load.source$
+-- Target:    $load.target$ ($load.type$)
+--
+$/ foreach map in load.maps
+-- Map: $map.source$ to $map.target$ $map.deletableMarker$$map.roleComment$
+$/ endfor
+--
+$/ if load.hasDeletables
+-- [D] marks deletable attributes
+$/ endif
+-- Generated: $generated$ by $username$
+-- From: $computer$ in the $domain$ domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [$sourceSchema$].[$load.qualified$] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+
+SET NOCOUNT ON;
+DECLARE @inserts int;
+DECLARE @updates int;
+DECLARE @deletes int;
+DECLARE @actions TABLE (
+    [action] char(1) not null
+);
+$/ if metadata
+DECLARE @workId int;
+DECLARE @operationsId int;
+DECLARE @theErrorLine int;
+DECLARE @theErrorMessage varchar(555);
+DECLARE @theErrorSeverity int;
+DECLARE @theErrorState int;
+
+EXEC $metadatabase$.metadata._WorkStarting
+$/ if target.namePresent
+    @configurationName = '$target.name$',
+$/ else
+    @configurationName = null,
+$/ endif
+    @configurationType = 'Target',
+    @WO_ID = @workId OUTPUT,
+    @name  = '$load.qualified$',
+    @agentStepId = @agentStepId,
+    @agentJobId = @agentJobId
+
+BEGIN TRY
+EXEC $metadatabase$.metadata._WorkSourceToTarget
+    @OP_ID = @operationsId OUTPUT,
+    @WO_ID = @workId,
+    @sourceName = '$load.source$',
+    @targetName = '$load.target$',
+    @sourceType = 'Table',
+    @targetType = 'Table',
+    @sourceCreated = DEFAULT,
+    @targetCreated = DEFAULT;
+$/ endif
+$/ if load.hasBefore
+    -- Preparations before the merge -----------------
+    $load.before$
+$/ endif
+$/ if load.isInsert
+    -- Perform the actual insert ----------------------
+    INSERT INTO [$target.database$].[$targetSchema$].[$load.target$] (
+$/ foreach map in load.insertMaps
+        [$map.target$]$/ if not map.last() ,$/ endif
+$/ endfor
+    )
+    SELECT
+$/ foreach map in load.insertMaps
+        [source].[$map.source$]$/ if not map.last() ,$/ endif
+$/ endfor
+$/ if load.hasQuery
+    FROM (
+        $load.query$
+    ) AS [source];
+$/ else
+    FROM
+        $load.source$ AS [source];
+$/ endif
+    SET @inserts = NULLIF(@@ROWCOUNT + COALESCE(@inserts, 0), 0);
+$/ else
+    -- Perform the actual merge ----------------------
+    MERGE INTO [$target.database$].[$targetSchema$].[$load.target$] AS [target]
+$/ if load.hasQuery
+    USING (
+        $load.query$
+    ) AS [source]
+$/ else
+    USING
+        $load.source$ AS [source]
+$/ endif
+    ON (
+$/ foreach map in load.keyMaps
+        [source].[$map.source$] = [target].[$map.target$]
+$/ if not map.last()
+    AND
+$/ endif
+$/ endfor
+$/ if load.hasCondition
+    AND (
+        $load.condition$
+        )
+$/ endif
+    )
+$/ if load.mergeInsertMaps
+    WHEN NOT MATCHED THEN INSERT (
+$/ foreach map in load.mergeInsertMaps
+        [$map.target$]$/ if not map.last() ,$/ endif
+$/ endfor
+    )
+    VALUES (
+$/ foreach map in load.mergeInsertMaps
+        [source].[$map.source$]$/ if not map.last() ,$/ endif
+$/ endfor
+    )
+$/ endif
+$/ if load.updateConditions
+    WHEN MATCHED AND (
+$/ foreach map in load.updateConditions
+$/ if map.deletable
+        ([target].[$map.target$] is not null AND [source].[$map.source$] is null)
+    OR
+$/ endif
+$/ if map.isStatic
+        ([target].[$map.target$] is null)
+$/ else
+        ([target].[$map.target$] is null OR [source].[$map.source$] <> [target].[$map.target$])
+$/ endif
+$/ if not map.last()
+    OR
+$/ endif
+$/ endfor
+    )
+    THEN UPDATE
+    SET
+$/ foreach map in load.updateMaps
+$/ if unitemporal and map.deletable and not map.isHistory
+        [target].$map.deletableColumn$ = 1,
+$/ endif
+$/ if map.isStatic
+        [target].[$map.target$] =
+            CASE
+                WHEN ([target].[$map.target$] is null)
+                THEN [source].[$map.source$]
+                ELSE [target].[$map.target$]
+            END$/ if not map.last() ,$/ endif
+$/ else
+        [target].[$map.target$] = [source].[$map.source$]$/ if not map.last() ,$/ endif
+$/ endif
+$/ endfor
+$/ endif
+    OUTPUT
+        LEFT($action, 1) INTO @actions;
+
+    -- workaround for "Protocol error in TDS stream" bug
+    SELECT
+        @inserts = NULLIF(SUM(CASE WHEN [action] = 'I' THEN 1 ELSE 0 END), 0),
+        @updates = NULLIF(SUM(CASE WHEN [action] = 'U' THEN 1 ELSE 0 END), 0),
+        @deletes = NULLIF(SUM(CASE WHEN [action] = 'D' THEN 1 ELSE 0 END), 0)
+    FROM
+        @actions;
+$/ endif
+$/ if metadata
+    EXEC $metadatabase$.metadata._WorkSetInserts @workId, @operationsId, @inserts;
+    EXEC $metadatabase$.metadata._WorkSetUpdates @workId, @operationsId, @updates;
+    EXEC $metadatabase$.metadata._WorkSetDeletes @workId, @operationsId, @deletes;
+$/ endif
+$/ if load.hasAfter
+    -- Post processing after the merge ---------------
+    $load.after$
+$/ endif
+$/ if metadata
+    EXEC $metadatabase$.metadata._WorkStopping @workId, 'Success';
+END TRY
+BEGIN CATCH
+	SELECT
+		@theErrorLine = ERROR_LINE(),
+		@theErrorMessage = ERROR_MESSAGE(),
+        @theErrorSeverity = ERROR_SEVERITY(),
+        @theErrorState = ERROR_STATE();
+
+    EXEC $metadatabase$.metadata._WorkStopping
+        @WO_ID = @workId,
+        @status = 'Failure',
+        @errorLine = @theErrorLine,
+        @errorMessage = @theErrorMessage;
+
+    -- Propagate the error
+    RAISERROR(
+        @theErrorMessage,
+        @theErrorSeverity,
+        @theErrorState
+    );
+END CATCH
+$/ endif
+END
+GO
+$/ endfor
+$/ if metadata
+-- The target definition used when generating the above
+DECLARE @xml XML = N'$target.escapedXml$';
+DECLARE @name varchar(255) = @xml.value('/target[1]/@name', 'varchar(255)');
+DECLARE @CF_ID int;
+SELECT
+    @CF_ID = CF_ID
+FROM
+    $metadatabase$.metadata.lCF_Configuration
+WHERE
+    CF_NAM_Configuration_Name = @name;
+
+IF(@CF_ID is null)
+BEGIN
+    INSERT INTO $metadatabase$.metadata.lCF_Configuration (
+        CF_TYP_CFT_ConfigurationType,
+        CF_NAM_Configuration_Name,
+        CF_XML_Configuration_XMLDefinition
+    )
+    VALUES (
+        'Target',
+        @name,
+        @xml
+    );
+END
+ELSE
+BEGIN
+    UPDATE $metadatabase$.metadata.lCF_Configuration
+    SET
+        CF_XML_Configuration_XMLDefinition = @xml
+    WHERE
+        CF_NAM_Configuration_Name = @name;
+END
+$/ endif

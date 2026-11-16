@@ -1,0 +1,4 @@
+$/ if hasSourceDatabase
+USE $sourceDatabase$;
+GO
+$/ endif

@@ -1,0 +1,135 @@
+$/ foreach part in source.parts
+-- Dropping split view to enforce Deferred Name Resolution: $part.qualified$_Split
+IF Object_ID('$sourceSchema$.$part.qualified$_Split', 'V') IS NOT NULL
+DROP VIEW [$sourceSchema$].[$part.qualified$_Split];
+$/ endfor
+IF Object_ID('$sourceSchema$.$source.qualified$_CreateSplitViews', 'P') IS NOT NULL
+DROP PROCEDURE [$sourceSchema$].[$source.qualified$_CreateSplitViews];
+GO
+
+--------------------------------------------------------------------------
+-- Procedure: $source.qualified$_CreateSplitViews
+--
+-- The split view uses a CLR called the Splitter to split rows in the
+-- 'raw' table into columns. The Splitter uses a regular expression in
+-- which groups indicate which parts should be cut out as columns.
+--
+-- The view also checks data types and provide the results as well as
+-- show the 'raw' cut column value, before any given transformations
+-- have taken place.
+--
+-- If keys are defined, these keys are checked for duplicates and the
+-- duplicate number can be found through the view.
+--
+$/ foreach part in source.parts
+-- Create: $part.qualified$_Split
+$/ endfor
+--
+-- Generated: $generated$ by $username$
+-- From: $computer$ in the $domain$ domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [$sourceSchema$].[$source.qualified$_CreateSplitViews] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+$sourceMeta.beginSplitViews$
+$/ foreach part in source.parts
+    IF Object_ID('$sourceSchema$.$part.qualified$_Split', 'V') IS NOT NULL
+    DROP VIEW [$sourceSchema$].[$part.qualified$_Split];
+    EXEC('
+    CREATE VIEW [$sourceSchema$].[$part.qualified$_Split]
+    AS
+    SELECT
+        t._id,
+        t.metadata_CO_ID,
+        t.metadata_JB_ID,
+        t._timestamp,
+$/ foreach term in part.terms
+        m.[$term.name$] as [$term.name$_Match],
+        t.[$term.name$],
+        CASE
+$/ if term.isKey
+            WHEN t.[$term.name$] is null THEN ''Null value not allowed''
+$/ endif
+            WHEN t.[$term.name$] is not null AND [$sourceSchema$].IsType(t.[$term.name$], ''$term.format$'') = 0 THEN ''Conversion to $term.format$ failed''
+        END AS [$term.name$_Error]$/ if not term.last() or part.keys ,$/ endif
+$/ endfor
+$/ foreach key in part.keys
+        ROW_NUMBER() OVER (
+            PARTITION BY
+$/ foreach component in key.components
+                t.[$component.of$]$/ if not component.last() ,$/ endif
+$/ endfor
+            ORDER BY
+                t._id
+        ) - 1 as $key.name$_Duplicate$/ if not key.last() ,$/ endif
+$/ endfor
+$/ if isBulk
+    FROM (
+        SELECT
+            _id,
+            metadata_CO_ID,
+            metadata_JB_ID,
+            _timestamp,
+$/ foreach term in part.terms
+			NULLIF([$term.name$], ''$term.nulls$'') AS [$term.name$]$/ if not term.last() ,$/ endif
+$/ endfor
+$/ if part.hasQuery
+        FROM (
+        $part.query$
+        ) src
+$/ else
+        FROM $--$
+            [$sourceSchema$].[$source.qualified$_RawSplit]
+$/ endif
+    ) m
+$/ else
+    FROM (
+        SELECT TOP($maxlen$)
+            *
+$/ if part.hasQuery
+        FROM (
+        $part.query$
+        ) src
+$/ else
+        FROM $--$
+            [$sourceSchema$].[$source.qualified$_Raw] src
+$/ endif
+        ORDER BY
+            _id ASC
+    ) forcedMaterializationTrick
+    CROSS APPLY (
+		SELECT
+$/ foreach term in part.terms
+			NULLIF([$term.position$], ''$term.nulls$'') AS [$term.name$]$/ if not term.last() ,$/ endif
+$/ endfor
+		FROM (
+            SELECT
+                [match],
+                ROW_NUMBER() OVER (ORDER BY (SELECT 1)) AS idx
+            FROM
+                [$sourceSchema$].Splitter(ISNULL(forcedMaterializationTrick.[row], ''''), N''$part.regex$'')
+        ) s
+        PIVOT (
+            MAX([match]) FOR idx IN ($part.pivots$)
+        ) p
+    ) m
+$/ endif
+    CROSS APPLY (
+        SELECT
+            _id,
+            metadata_CO_ID,
+            metadata_JB_ID,
+            _timestamp,
+$/ foreach term in part.terms
+            $term.transformation$ AS [$term.name$]$/ if not term.last() ,$/ endif
+$/ endfor
+    ) t;
+    ');
+$/ endfor
+$sourceMeta.end$
+END
+GO
