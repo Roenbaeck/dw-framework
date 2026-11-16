@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<BCPFORMAT
+xmlns="http://schemas.microsoft.com/sqlserver/2004/bulkload/format"
+   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+   <RECORD>
+      <FIELD xsi:type="NCharFixed" ID="Fixed" LENGTH="4" />
+      <FIELD xsi:type="NCharTerm" ID="Quoted" TERMINATOR='"' />
+      <FIELD xsi:type="NCharTerm" ID="Last" TERMINATOR="|END" />
+   </RECORD>
+   <ROW>
+      <COLUMN SOURCE="Fixed" NAME="Fixed" xsi:type="SQLNVARCHAR" />
+      <COLUMN SOURCE="Quoted" NAME="Quoted" xsi:type="SQLNVARCHAR" />
+      <COLUMN SOURCE="Last" NAME="Last" xsi:type="SQLNVARCHAR" />
+   </ROW>
+</BCPFORMAT>

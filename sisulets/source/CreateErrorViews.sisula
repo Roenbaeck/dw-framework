@@ -1,0 +1,64 @@
+$/ foreach part in source.parts
+-- Dropping error view to enforce Deferred Name Resolution: $part.qualified$_Error
+IF Object_ID('$sourceSchema$.$part.qualified$_Error', 'V') IS NOT NULL
+DROP VIEW [$sourceSchema$].[$part.qualified$_Error];
+$/ endfor
+IF Object_ID('$sourceSchema$.$source.qualified$_CreateErrorViews', 'P') IS NOT NULL
+DROP PROCEDURE [$sourceSchema$].[$source.qualified$_CreateErrorViews];
+GO
+
+--------------------------------------------------------------------------
+-- Procedure: $source.qualified$_CreateErrorViews
+--
+-- The created error views can be used to find rows that have errors of
+-- the following kinds:
+--
+-- Type casting errors
+-- These errors occur when a value cannot be cast to its designated
+-- datatype, for example when trying to cast 'A' to an int.
+--
+-- Key duplicate errors
+-- These errors occur when a primary key is defined and duplicates of
+-- that key is found in the tables.
+--
+$/ foreach part in source.parts
+-- Create: $part.qualified$_Error
+$/ endfor
+--
+-- Generated: $generated$ by $username$
+-- From: $computer$ in the $domain$ domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [$sourceSchema$].[$source.qualified$_CreateErrorViews] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+$sourceMeta.beginInsertView$
+$/ foreach part in source.parts
+    IF Object_ID('$sourceSchema$.$part.qualified$_Error', 'V') IS NOT NULL
+    DROP VIEW [$sourceSchema$].[$part.qualified$_Error];
+    EXEC('
+    CREATE VIEW [$sourceSchema$].[$part.qualified$_Error] $--$
+    AS
+    SELECT
+        *
+    FROM
+        [$sourceSchema$].[$part.qualified$_Split]
+    WHERE
+$/ foreach key in part.keys
+        $key.name$_Duplicate > 0
+    OR
+$/ endfor
+$/ foreach term in part.terms
+        [$term.name$_Error] is not null$/ if term.last() ;$/ endif
+$/ if not term.last()
+    OR
+$/ endif
+$/ endfor
+    ');
+$/ endfor
+$sourceMeta.end$
+END
+GO

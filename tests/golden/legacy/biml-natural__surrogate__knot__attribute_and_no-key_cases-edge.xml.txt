@@ -1,0 +1,517 @@
+<Biml xmlns="http://schemas.varigence.com/biml.xsd">
+    <Connections>
+        <OleDbConnection Name="Stage" ConnectionString="Data Source=Source;Server=Source;Initial Catalog=Stage;Integrated Security=SSPI;Provider=SQLNCLI11;Packet Size=32737;" />
+        <OleDbConnection Name="DW" ConnectionString="Data Source=Target;Server=Target;Initial Catalog=DW;Integrated Security=SSPI;Provider=SQLNCLI11;Packet Size=32737;" />
+    </Connections>
+    <Packages>
+        <Package Name="lAA_Thing__NaturalStage" ConstraintMode="Linear" ProtectionLevel="EncryptSensitiveWithPassword" PackagePassword="sisula">
+            <Annotations>
+                <Annotation AnnotationType="Description">BIML generated: <timestamp> by test-user from: test-computer in the test-domain domain</Annotation>
+            </Annotations>
+            <Tasks>
+                <ExecuteSQL Name="SQL Before" ConnectionName="Stage">
+                    <DirectInput>select 'before';</DirectInput>
+                </ExecuteSQL>
+                <ExecuteSQL Name="Disable triggers and constraints" ConnectionName="DW">
+                    <DirectInput>
+                    DISABLE TRIGGER ALL ON [dbo].[AA_NAM_Thing_Name];
+                    ALTER TABLE [dbo].[AA_NAM_Thing_Name] NOCHECK CONSTRAINT ALL;
+                    DISABLE TRIGGER ALL ON [dbo].[AA_STA_Thing_Status];
+                    ALTER TABLE [dbo].[AA_STA_Thing_Status] NOCHECK CONSTRAINT ALL;
+                    DISABLE TRIGGER ALL ON [dbo].[AA_ST2_Thing_Status2];
+                    ALTER TABLE [dbo].[AA_ST2_Thing_Status2] NOCHECK CONSTRAINT ALL;
+                    </DirectInput>
+                </ExecuteSQL>
+                <Dataflow Name="Load knots" EngineThreads="3">
+                    <Transformations>
+                        <OleDbSource Name="NaturalStage" ConnectionName="Stage">
+                            <DirectInput>select 'O''Brien' as Name, '$value$' as Status</DirectInput>
+                        </OleDbSource>
+                        <Multicast Name="Split">
+                            <OutputPaths>
+                                <OutputPath Name="AA_STA_Thing_Status"/>
+                                <OutputPath Name="AA_ST2_Thing_Status2"/>
+                            </OutputPaths>
+                        </Multicast>
+                        <ConditionalSplit Name="AA_STA_Thing_Status__not_Null">
+                            <OutputPaths>
+                                <OutputPath Name="Values">
+                                    <Expression>!ISNULL([Status])</Expression>
+                                </OutputPath>
+                            </OutputPaths>
+                            <InputPath OutputPathName="Split.AA_STA_Thing_Status" />
+                        </ConditionalSplit>
+                        <Aggregate Name="AA_STA_Thing_Status__Unique" GroupByKeyScale="Low" AutoExtendFactor="100">
+                            <InputPath OutputPathName="AA_STA_Thing_Status__not_Null.Values" />
+                            <OutputPaths>
+                                <OutputPath Name="Values">
+                                    <Columns>
+                                        <Column Operation="GroupBy" SourceColumn="Status" TargetColumn="KNT_Status"/>
+                                        <Column Operation="Minimum" SourceColumn="Meta" />
+                                    </Columns>
+                                </OutputPath>
+                            </OutputPaths>
+                        </Aggregate>
+                        <ConditionalSplit Name="AA_ST2_Thing_Status2__not_Null">
+                            <OutputPaths>
+                                <OutputPath Name="Values">
+                                    <Expression>!ISNULL([OtherStatus])</Expression>
+                                </OutputPath>
+                            </OutputPaths>
+                            <InputPath OutputPathName="Split.AA_ST2_Thing_Status2" />
+                        </ConditionalSplit>
+                        <Aggregate Name="AA_ST2_Thing_Status2__Unique" GroupByKeyScale="Low" AutoExtendFactor="100">
+                            <InputPath OutputPathName="AA_ST2_Thing_Status2__not_Null.Values" />
+                            <OutputPaths>
+                                <OutputPath Name="Values">
+                                    <Columns>
+                                        <Column Operation="GroupBy" SourceColumn="OtherStatus" TargetColumn="KNT_Status"/>
+                                        <Column Operation="Minimum" SourceColumn="Meta" />
+                                    </Columns>
+                                </OutputPath>
+                            </OutputPaths>
+                        </Aggregate>
+                        <UnionAll Name="KNT_Status__Union">
+                            <InputPaths>
+                                <InputPath OutputPathName="AA_STA_Thing_Status__Unique.Values">
+                                    <Columns>
+                                        <Column SourceColumn="Status"/>
+                                    </Columns>
+                                </InputPath>
+                                <InputPath OutputPathName="AA_ST2_Thing_Status2__Unique.Values">
+                                    <Columns>
+                                        <Column SourceColumn="OtherStatus"/>
+                                    </Columns>
+                                </InputPath>
+                            </InputPaths>
+                        </UnionAll>
+                        <Aggregate Name="KNT_Status__Unique" GroupByKeyScale="Low" AutoExtendFactor="100">
+                            <OutputPaths>
+                                <OutputPath Name="Values">
+                                    <Columns>
+                                        <Column Operation="GroupBy" SourceColumn="KNT_Status" TargetColumn="KNT_Status"/>
+                                        <Column Operation="Minimum" SourceColumn="Meta" />
+                                    </Columns>
+                                </OutputPath>
+                            </OutputPaths>
+                        </Aggregate>
+                        <Lookup Name="KNT_Status__Lookup" NoMatchBehavior="RedirectRowsToNoMatchOutput" CacheMode="Full" OleDbConnectionName="DW">
+                            <ExternalTableInput Table="[dbo].[KNT_Status]" />
+                            <Inputs>
+                                <Column SourceColumn="KNT_Status" TargetColumn="KNT_Status" />
+                            </Inputs>
+                            <InputPath OutputPathName="KNT_Status__Unique.Values" />
+                        </Lookup>
+                        <OleDbDestination Name="KNT_Status" ConnectionName="DW" BatchSize="0" MaximumInsertCommitSize="0" KeepNulls="false" KeepIdentity="false" CheckConstraints="false" UseFastLoadIfAvailable="true" TableLock="true">
+                            <ErrorHandling ErrorRowDisposition="FailComponent" TruncationRowDisposition="FailComponent" />
+                            <ExternalTableOutput Table="[dbo].[KNT_Status]" />
+                            <InputPath OutputPathName="KNT_Status__Lookup.NoMatch" />
+                            <Columns>
+                                <Column SourceColumn="KNT_Status" TargetColumn="KNT_Status" />
+                                <Column SourceColumn="Meta" TargetColumn="Metadata_KNT" />
+                            </Columns>
+                        </OleDbDestination>
+                    </Transformations>
+                </Dataflow>
+                <Dataflow Name="Load data" EngineThreads="7">
+                    <Transformations>
+                        <OleDbSource Name="NaturalStage" ConnectionName="Stage">
+                            <DirectInput>
+                                DBCC TRACEON (610);
+                                DECLARE @known INT = 0;
+                                MERGE [DW].[dbo].[AA_Thing] [AA]
+                                USING (
+                                    SELECT
+                                        l.AA_ID,
+                                        t.Name,
+                                        t.Changed,
+                                        t.Status,
+                                        t.OtherStatus,
+                                        t.Meta
+                                    FROM (
+                                        select 'O''Brien' as Name, '$value$' as Status
+                                    ) t
+                                    LEFT JOIN
+                                        [DW].[dbo].[lAA_Thing] l WITH (NOLOCK)
+                                    ON
+                                        t.Name = l.AA_NAM_Thing_Name 
+                                ) src
+                                ON
+                                    src.AA_ID = [AA].AA_ID
+                                WHEN NOT MATCHED THEN 
+                                INSERT ( Metadata_AA )
+                                VALUES ( src.Meta )
+                                WHEN MATCHED THEN 
+                                UPDATE SET @known = @known + 1
+                                OUTPUT
+                                    isnull(src.AA_ID, inserted.AA_ID) as AA_ID,
+                                    src.Name,
+                                    src.Changed,
+                                    src.Status,
+                                    src.OtherStatus,
+                                    src.Meta,
+                                    left($action, 1) as __Operation;
+                            </DirectInput>
+                        </OleDbSource>
+                        <ConditionalSplit Name="Known_Unknown">
+                            <OutputPaths>
+                                <OutputPath Name="Known">
+                                    <Expression>[__Operation]=="U"</Expression>
+                                </OutputPath>
+                                <OutputPath Name="Unknown">
+                                    <Expression>[__Operation]=="I"</Expression>
+                                </OutputPath>
+                            </OutputPaths>
+                        </ConditionalSplit>
+                        <Multicast Name="Split_Known">
+                            <OutputPaths>
+                                <OutputPath Name="AA_NAM_Thing_Name"/>
+                                <OutputPath Name="AA_STA_Thing_Status"/>
+                                <OutputPath Name="AA_ST2_Thing_Status2"/>
+                            </OutputPaths>
+                            <InputPath OutputPathName="Known_Unknown.Known" />
+                        </Multicast>
+                        <ConditionalSplit Name="AA_NAM_Thing_Name__Known_not_Null">
+                            <OutputPaths>
+                                <OutputPath Name="Values">
+                                    <Expression>!ISNULL([Name])</Expression>
+                                </OutputPath>
+                            </OutputPaths>
+                            <InputPath OutputPathName="Split_Known.AA_NAM_Thing_Name" />
+                        </ConditionalSplit>
+                        <Lookup Name="AA_NAM_Thing_Name__Known_Lookup" NoMatchBehavior="RedirectRowsToNoMatchOutput" CacheMode="Partial" OleDbConnectionName="DW">
+                            <DirectInput>
+                                SELECT AA_NAM_AA_ID, AA_NAM_Thing_Name, AA_NAM_ChangedAt 
+                                FROM (
+                                    SELECT AA_NAM_AA_ID, AA_NAM_Thing_Name, AA_NAM_ChangedAt,
+                                        LAST_VALUE(AA_NAM_ChangedAt) OVER (
+                                            PARTITION BY AA_NAM_AA_ID ORDER BY AA_NAM_ChangedAt RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING
+                                        ) as Last_ChangedAt
+                                    FROM
+                                        [dbo].[AA_NAM_Thing_Name]
+                                ) a WHERE AA_NAM_ChangedAt = Last_ChangedAt
+                            </DirectInput>
+                            <Inputs>
+                                <Column SourceColumn="Name" TargetColumn="AA_NAM_Thing_Name" />
+                                <Column SourceColumn="AA_ID" TargetColumn="AA_NAM_AA_ID" />
+                            </Inputs>
+                            <InputPath OutputPathName="AA_NAM_Thing_Name__Known_not_Null.Values" />
+                        </Lookup>
+                        <OleDbDestination Name="AA_NAM_Thing_Name__Known" ConnectionName="DW" BatchSize="0" MaximumInsertCommitSize="0" FastLoadOptions="ORDER(AA_NAM_AA_ID ASC)" KeepNulls="false" KeepIdentity="false" CheckConstraints="false" UseFastLoadIfAvailable="true" TableLock="true">
+                            <ErrorHandling ErrorRowDisposition="FailComponent" TruncationRowDisposition="FailComponent" />
+                            <ExternalTableOutput Table="[dbo].[AA_NAM_Thing_Name]" />
+                            <InputPath OutputPathName="AA_NAM_Thing_Name__Known_Lookup.NoMatch" />
+                            <Columns>
+                                <Column SourceColumn="AA_ID" TargetColumn="AA_NAM_AA_ID" />
+                                <Column SourceColumn="Name" TargetColumn="AA_NAM_Thing_Name" />
+                                <Column SourceColumn="Changed" TargetColumn="AA_NAM_ChangedAt" />
+                                <Column SourceColumn="Meta" TargetColumn="Metadata_AA_NAM" />
+                            </Columns>
+                        </OleDbDestination>
+                        <ConditionalSplit Name="AA_STA_Thing_Status__Known_not_Null">
+                            <OutputPaths>
+                                <OutputPath Name="Values">
+                                    <Expression>!ISNULL([Status])</Expression>
+                                </OutputPath>
+                            </OutputPaths>
+                            <InputPath OutputPathName="Split_Known.AA_STA_Thing_Status" />
+                        </ConditionalSplit>
+                        <Lookup Name="AA_STA_Thing_Status__Known_Knot_Lookup" NoMatchBehavior="FailComponent" CacheMode="Full" OleDbConnectionName="DW">
+                            <ExternalTableInput Table="[dbo].[KNT_Status]" />
+                            <Inputs>
+                                <Column SourceColumn="Status" TargetColumn="KNT_Status" />
+                            </Inputs>
+                            <Outputs>
+                                <Column SourceColumn="KNT_ID" />
+                            </Outputs>
+                            <InputPath OutputPathName="AA_STA_Thing_Status__Known_not_Null.Values" />
+                        </Lookup>
+                        <Lookup Name="AA_STA_Thing_Status__Known_Lookup" NoMatchBehavior="RedirectRowsToNoMatchOutput" CacheMode="Partial" OleDbConnectionName="DW">
+                            <ExternalTableInput Table="[dbo].[AA_STA_Thing_Status]" />
+                            <Inputs>
+                                <Column SourceColumn="KNT_ID" TargetColumn="AA_STA_KNT_ID" />
+                                <Column SourceColumn="AA_ID" TargetColumn="AA_STA_AA_ID" />
+                            </Inputs>
+                            <InputPath OutputPathName="AA_STA_Thing_Status__Known_Knot_Lookup.Match" />
+                        </Lookup>
+                        <OleDbDestination Name="AA_STA_Thing_Status__Known" ConnectionName="DW" BatchSize="0" MaximumInsertCommitSize="0" FastLoadOptions="ORDER(AA_STA_AA_ID ASC)" KeepNulls="false" KeepIdentity="false" CheckConstraints="false" UseFastLoadIfAvailable="true" TableLock="true">
+                            <ErrorHandling ErrorRowDisposition="FailComponent" TruncationRowDisposition="FailComponent" />
+                            <ExternalTableOutput Table="[dbo].[AA_STA_Thing_Status]" />
+                            <InputPath OutputPathName="AA_STA_Thing_Status__Known_Lookup.NoMatch" />
+                            <Columns>
+                                <Column SourceColumn="AA_ID" TargetColumn="AA_STA_AA_ID" />
+                                <Column SourceColumn="KNT_ID" TargetColumn="AA_STA_KNT_ID" />
+                                <Column SourceColumn="Meta" TargetColumn="Metadata_AA_STA" />
+                            </Columns>
+                        </OleDbDestination>
+                        <ConditionalSplit Name="AA_ST2_Thing_Status2__Known_not_Null">
+                            <OutputPaths>
+                                <OutputPath Name="Values">
+                                    <Expression>!ISNULL([OtherStatus])</Expression>
+                                </OutputPath>
+                            </OutputPaths>
+                            <InputPath OutputPathName="Split_Known.AA_ST2_Thing_Status2" />
+                        </ConditionalSplit>
+                        <Lookup Name="AA_ST2_Thing_Status2__Known_Knot_Lookup" NoMatchBehavior="FailComponent" CacheMode="Full" OleDbConnectionName="DW">
+                            <ExternalTableInput Table="[dbo].[KNT_Status]" />
+                            <Inputs>
+                                <Column SourceColumn="OtherStatus" TargetColumn="KNT_Status" />
+                            </Inputs>
+                            <Outputs>
+                                <Column SourceColumn="KNT_ID" />
+                            </Outputs>
+                            <InputPath OutputPathName="AA_ST2_Thing_Status2__Known_not_Null.Values" />
+                        </Lookup>
+                        <Lookup Name="AA_ST2_Thing_Status2__Known_Lookup" NoMatchBehavior="RedirectRowsToNoMatchOutput" CacheMode="Partial" OleDbConnectionName="DW">
+                            <ExternalTableInput Table="[dbo].[AA_ST2_Thing_Status2]" />
+                            <Inputs>
+                                <Column SourceColumn="KNT_ID" TargetColumn="AA_ST2_KNT_ID" />
+                                <Column SourceColumn="AA_ID" TargetColumn="AA_ST2_AA_ID" />
+                            </Inputs>
+                            <InputPath OutputPathName="AA_ST2_Thing_Status2__Known_Knot_Lookup.Match" />
+                        </Lookup>
+                        <OleDbDestination Name="AA_ST2_Thing_Status2__Known" ConnectionName="DW" BatchSize="0" MaximumInsertCommitSize="0" FastLoadOptions="ORDER(AA_ST2_AA_ID ASC)" KeepNulls="false" KeepIdentity="false" CheckConstraints="false" UseFastLoadIfAvailable="true" TableLock="true">
+                            <ErrorHandling ErrorRowDisposition="FailComponent" TruncationRowDisposition="FailComponent" />
+                            <ExternalTableOutput Table="[dbo].[AA_ST2_Thing_Status2]" />
+                            <InputPath OutputPathName="AA_ST2_Thing_Status2__Known_Lookup.NoMatch" />
+                            <Columns>
+                                <Column SourceColumn="AA_ID" TargetColumn="AA_ST2_AA_ID" />
+                                <Column SourceColumn="KNT_ID" TargetColumn="AA_ST2_KNT_ID" />
+                                <Column SourceColumn="Meta" TargetColumn="Metadata_AA_ST2" />
+                            </Columns>
+                        </OleDbDestination>
+                        <Multicast Name="Split_Unknown">
+                            <OutputPaths>
+                                <OutputPath Name="AA_NAM_Thing_Name"/>
+                                <OutputPath Name="AA_STA_Thing_Status"/>
+                                <OutputPath Name="AA_ST2_Thing_Status2"/>
+                            </OutputPaths>
+                            <InputPath OutputPathName="Known_Unknown.Unknown" />
+                        </Multicast>
+                        <ConditionalSplit Name="AA_NAM_Thing_Name__Unknown_not_Null">
+                            <OutputPaths>
+                                <OutputPath Name="Values">
+                                    <Expression>!ISNULL([Name])</Expression>
+                                </OutputPath>
+                            </OutputPaths>
+                            <InputPath OutputPathName="Split_Unknown.AA_NAM_Thing_Name" />
+                        </ConditionalSplit>
+                        <OleDbDestination Name="AA_NAM_Thing_Name__Unknown" ConnectionName="DW" BatchSize="0" MaximumInsertCommitSize="0" FastLoadOptions="ORDER(AA_NAM_AA_ID ASC)" KeepNulls="false" KeepIdentity="false" CheckConstraints="false" UseFastLoadIfAvailable="true" TableLock="true">
+                            <ErrorHandling ErrorRowDisposition="FailComponent" TruncationRowDisposition="FailComponent" />
+                            <ExternalTableOutput Table="[dbo].[AA_NAM_Thing_Name]" />
+                            <InputPath OutputPathName="AA_NAM_Thing_Name__Unknown_not_Null.Values" />
+                            <Columns>
+                                <Column SourceColumn="AA_ID" TargetColumn="AA_NAM_AA_ID" />
+                                <Column SourceColumn="Name" TargetColumn="AA_NAM_Thing_Name" />
+                                <Column SourceColumn="Changed" TargetColumn="AA_NAM_ChangedAt" />
+                                <Column SourceColumn="Meta" TargetColumn="Metadata_AA_NAM" />
+                            </Columns>
+                        </OleDbDestination>
+                        <ConditionalSplit Name="AA_STA_Thing_Status__Unknown_not_Null">
+                            <OutputPaths>
+                                <OutputPath Name="Values">
+                                    <Expression>!ISNULL([Status])</Expression>
+                                </OutputPath>
+                            </OutputPaths>
+                            <InputPath OutputPathName="Split_Unknown.AA_STA_Thing_Status" />
+                        </ConditionalSplit>
+                        <Lookup Name="AA_STA_Thing_Status__Unknown_Knot_Lookup" NoMatchBehavior="FailComponent" CacheMode="Full" OleDbConnectionName="DW">
+                            <ExternalTableInput Table="[dbo].[KNT_Status]" />
+                            <Inputs>
+                                <Column SourceColumn="Status" TargetColumn="KNT_Status" />
+                            </Inputs>
+                            <Outputs>
+                                <Column SourceColumn="KNT_ID" />
+                            </Outputs>
+                            <InputPath OutputPathName="AA_STA_Thing_Status__Unknown_not_Null.Values" />
+                        </Lookup>
+                        <OleDbDestination Name="AA_STA_Thing_Status__Unknown" ConnectionName="DW" BatchSize="0" MaximumInsertCommitSize="0" FastLoadOptions="ORDER(AA_STA_AA_ID ASC)" KeepNulls="false" KeepIdentity="false" CheckConstraints="false" UseFastLoadIfAvailable="true" TableLock="true">
+                            <ErrorHandling ErrorRowDisposition="FailComponent" TruncationRowDisposition="FailComponent" />
+                            <ExternalTableOutput Table="[dbo].[AA_STA_Thing_Status]" />
+                            <InputPath OutputPathName="AA_STA_Thing_Status__Unknown_Knot_Lookup.Match" />
+                            <Columns>
+                                <Column SourceColumn="AA_ID" TargetColumn="AA_STA_AA_ID" />
+                                <Column SourceColumn="KNT_ID" TargetColumn="AA_STA_KNT_ID" />
+                                <Column SourceColumn="Meta" TargetColumn="Metadata_AA_STA" />
+                            </Columns>
+                        </OleDbDestination>
+                        <ConditionalSplit Name="AA_ST2_Thing_Status2__Unknown_not_Null">
+                            <OutputPaths>
+                                <OutputPath Name="Values">
+                                    <Expression>!ISNULL([OtherStatus])</Expression>
+                                </OutputPath>
+                            </OutputPaths>
+                            <InputPath OutputPathName="Split_Unknown.AA_ST2_Thing_Status2" />
+                        </ConditionalSplit>
+                        <Lookup Name="AA_ST2_Thing_Status2__Unknown_Knot_Lookup" NoMatchBehavior="FailComponent" CacheMode="Full" OleDbConnectionName="DW">
+                            <ExternalTableInput Table="[dbo].[KNT_Status]" />
+                            <Inputs>
+                                <Column SourceColumn="OtherStatus" TargetColumn="KNT_Status" />
+                            </Inputs>
+                            <Outputs>
+                                <Column SourceColumn="KNT_ID" />
+                            </Outputs>
+                            <InputPath OutputPathName="AA_ST2_Thing_Status2__Unknown_not_Null.Values" />
+                        </Lookup>
+                        <OleDbDestination Name="AA_ST2_Thing_Status2__Unknown" ConnectionName="DW" BatchSize="0" MaximumInsertCommitSize="0" FastLoadOptions="ORDER(AA_ST2_AA_ID ASC)" KeepNulls="false" KeepIdentity="false" CheckConstraints="false" UseFastLoadIfAvailable="true" TableLock="true">
+                            <ErrorHandling ErrorRowDisposition="FailComponent" TruncationRowDisposition="FailComponent" />
+                            <ExternalTableOutput Table="[dbo].[AA_ST2_Thing_Status2]" />
+                            <InputPath OutputPathName="AA_ST2_Thing_Status2__Unknown_Knot_Lookup.Match" />
+                            <Columns>
+                                <Column SourceColumn="AA_ID" TargetColumn="AA_ST2_AA_ID" />
+                                <Column SourceColumn="KNT_ID" TargetColumn="AA_ST2_KNT_ID" />
+                                <Column SourceColumn="Meta" TargetColumn="Metadata_AA_ST2" />
+                            </Columns>
+                        </OleDbDestination>
+                    </Transformations>
+                </Dataflow>
+                <ExecuteSQL Name="Enable triggers and constraints" ConnectionName="DW">
+                    <DirectInput>
+                    ENABLE TRIGGER ALL ON [dbo].[AA_NAM_Thing_Name];
+                    ALTER TABLE [dbo].[AA_NAM_Thing_Name] WITH NOCHECK CHECK CONSTRAINT ALL;
+                    ENABLE TRIGGER ALL ON [dbo].[AA_STA_Thing_Status];
+                    ALTER TABLE [dbo].[AA_STA_Thing_Status] WITH NOCHECK CHECK CONSTRAINT ALL;
+                    ENABLE TRIGGER ALL ON [dbo].[AA_ST2_Thing_Status2];
+                    ALTER TABLE [dbo].[AA_ST2_Thing_Status2] WITH NOCHECK CHECK CONSTRAINT ALL;
+                    </DirectInput>
+                </ExecuteSQL>
+                <ExecuteSQL Name="SQL After" ConnectionName="Stage">
+                    <DirectInput>select 'after';</DirectInput>
+                </ExecuteSQL>
+            </Tasks>
+        </Package>
+        <Package Name="lBB_Person__SurrogateStage" ConstraintMode="Linear" ProtectionLevel="EncryptSensitiveWithPassword" PackagePassword="sisula">
+            <Annotations>
+                <Annotation AnnotationType="Description">BIML generated: <timestamp> by test-user from: test-computer in the test-domain domain</Annotation>
+            </Annotations>
+            <Tasks>
+                <ExecuteSQL Name="Disable triggers and constraints" ConnectionName="DW">
+                    <DirectInput>
+                    DISABLE TRIGGER ALL ON [dbo].[BB_NAM_Person_Name];
+                    ALTER TABLE [dbo].[BB_NAM_Person_Name] NOCHECK CONSTRAINT ALL;
+                    </DirectInput>
+                </ExecuteSQL>
+                <Dataflow Name="Load data" EngineThreads="3">
+                    <Transformations>
+                        <OleDbSource Name="SurrogateStage" ConnectionName="Stage">
+                            <DirectInput>
+                                DBCC TRACEON (610);
+                                DECLARE @known INT = 0;
+                                MERGE [DW].[dbo].[BB_Person] [BB]
+                                USING (
+                                    SELECT * FROM SurrogateStage
+                                ) src
+                                ON
+                                    src.ID = [BB].BB_ID
+                                WHEN NOT MATCHED THEN 
+                                INSERT ( BB_Dummy )
+                                VALUES ( null )
+                                WHEN MATCHED THEN 
+                                UPDATE SET @known = @known + 1
+                                OUTPUT
+                                    isnull(src.ID, inserted.BB_ID) as BB_ID,
+                                    src.Name,
+                                    left($action, 1) as __Operation;
+                            </DirectInput>
+                        </OleDbSource>
+                        <ConditionalSplit Name="Known_Unknown">
+                            <OutputPaths>
+                                <OutputPath Name="Known">
+                                    <Expression>[__Operation]=="U"</Expression>
+                                </OutputPath>
+                                <OutputPath Name="Unknown">
+                                    <Expression>[__Operation]=="I"</Expression>
+                                </OutputPath>
+                            </OutputPaths>
+                        </ConditionalSplit>
+                        <Multicast Name="Split_Known">
+                            <OutputPaths>
+                                <OutputPath Name="BB_NAM_Person_Name"/>
+                            </OutputPaths>
+                            <InputPath OutputPathName="Known_Unknown.Known" />
+                        </Multicast>
+                        <ConditionalSplit Name="BB_NAM_Person_Name__Known_not_Null">
+                            <OutputPaths>
+                                <OutputPath Name="Values">
+                                    <Expression>!ISNULL([Name])</Expression>
+                                </OutputPath>
+                            </OutputPaths>
+                            <InputPath OutputPathName="Split_Known.BB_NAM_Person_Name" />
+                        </ConditionalSplit>
+                        <Lookup Name="BB_NAM_Person_Name__Known_Lookup" NoMatchBehavior="RedirectRowsToNoMatchOutput" CacheMode="Partial" OleDbConnectionName="DW">
+                            <ExternalTableInput Table="[dbo].[BB_NAM_Person_Name]" />
+                            <Inputs>
+                                <Column SourceColumn="Name" TargetColumn="BB_NAM_Person_Name" />
+                                <Column SourceColumn="BB_ID" TargetColumn="BB_NAM_BB_ID" />
+                            </Inputs>
+                            <InputPath OutputPathName="BB_NAM_Person_Name__Known_not_Null.Values" />
+                        </Lookup>
+                        <OleDbDestination Name="BB_NAM_Person_Name__Known" ConnectionName="DW" BatchSize="0" MaximumInsertCommitSize="0" FastLoadOptions="ORDER(BB_NAM_BB_ID ASC)" KeepNulls="false" KeepIdentity="false" CheckConstraints="false" UseFastLoadIfAvailable="true" TableLock="true">
+                            <ErrorHandling ErrorRowDisposition="FailComponent" TruncationRowDisposition="FailComponent" />
+                            <ExternalTableOutput Table="[dbo].[BB_NAM_Person_Name]" />
+                            <InputPath OutputPathName="BB_NAM_Person_Name__Known_Lookup.NoMatch" />
+                            <Columns>
+                                <Column SourceColumn="BB_ID" TargetColumn="BB_NAM_BB_ID" />
+                                <Column SourceColumn="Name" TargetColumn="BB_NAM_Person_Name" />
+                            </Columns>
+                        </OleDbDestination>
+                        <Multicast Name="Split_Unknown">
+                            <OutputPaths>
+                                <OutputPath Name="BB_NAM_Person_Name"/>
+                            </OutputPaths>
+                            <InputPath OutputPathName="Known_Unknown.Unknown" />
+                        </Multicast>
+                        <ConditionalSplit Name="BB_NAM_Person_Name__Unknown_not_Null">
+                            <OutputPaths>
+                                <OutputPath Name="Values">
+                                    <Expression>!ISNULL([Name])</Expression>
+                                </OutputPath>
+                            </OutputPaths>
+                            <InputPath OutputPathName="Split_Unknown.BB_NAM_Person_Name" />
+                        </ConditionalSplit>
+                        <OleDbDestination Name="BB_NAM_Person_Name__Unknown" ConnectionName="DW" BatchSize="0" MaximumInsertCommitSize="0" FastLoadOptions="ORDER(BB_NAM_BB_ID ASC)" KeepNulls="false" KeepIdentity="false" CheckConstraints="false" UseFastLoadIfAvailable="true" TableLock="true">
+                            <ErrorHandling ErrorRowDisposition="FailComponent" TruncationRowDisposition="FailComponent" />
+                            <ExternalTableOutput Table="[dbo].[BB_NAM_Person_Name]" />
+                            <InputPath OutputPathName="BB_NAM_Person_Name__Unknown_not_Null.Values" />
+                            <Columns>
+                                <Column SourceColumn="BB_ID" TargetColumn="BB_NAM_BB_ID" />
+                                <Column SourceColumn="Name" TargetColumn="BB_NAM_Person_Name" />
+                            </Columns>
+                        </OleDbDestination>
+                    </Transformations>
+                </Dataflow>
+                <ExecuteSQL Name="Enable triggers and constraints" ConnectionName="DW">
+                    <DirectInput>
+                    ENABLE TRIGGER ALL ON [dbo].[BB_NAM_Person_Name];
+                    ALTER TABLE [dbo].[BB_NAM_Person_Name] WITH NOCHECK CHECK CONSTRAINT ALL;
+                    </DirectInput>
+                </ExecuteSQL>
+            </Tasks>
+        </Package>
+        <Package Name="lCC_Item__NoKeyStage" ConstraintMode="Linear" ProtectionLevel="EncryptSensitiveWithPassword" PackagePassword="sisula">
+            <Annotations>
+                <Annotation AnnotationType="Description">BIML generated: <timestamp> by test-user from: test-computer in the test-domain domain</Annotation>
+            </Annotations>
+            <Tasks>
+                <Dataflow Name="Load data" EngineThreads="1">
+                    <Transformations>
+                        <OleDbSource Name="NoKeyStage" ConnectionName="Stage">
+                            <DirectInput>SELECT * FROM NoKeyStage</DirectInput>
+                        </OleDbSource>
+                    </Transformations>
+                </Dataflow>
+            </Tasks>
+        </Package>
+        <Package Name="lDD_Thing_extra__OtherStage" ConstraintMode="Linear" ProtectionLevel="EncryptSensitiveWithPassword" PackagePassword="sisula">
+            <Annotations>
+                <Annotation AnnotationType="Description">BIML generated: <timestamp> by test-user from: test-computer in the test-domain domain</Annotation>
+            </Annotations>
+            <Tasks>
+                <Dataflow Name="Load data" EngineThreads="1">
+                    <Transformations>
+                    </Transformations>
+                </Dataflow>
+            </Tasks>
+        </Package>
+    </Packages>
+</Biml>

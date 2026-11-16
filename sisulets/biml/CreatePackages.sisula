@@ -1,0 +1,342 @@
+<Biml xmlns="http://schemas.varigence.com/biml.xsd">
+    <Connections>
+        <OleDbConnection Name="$sourceDatabase$" ConnectionString="Data Source=$sourceServer$;Server=$sourceServer$;Initial Catalog=$sourceDatabase$;Integrated Security=SSPI;Provider=SQLNCLI11;Packet Size=32737;" />
+        <OleDbConnection Name="$targetDatabase$" ConnectionString="Data Source=$targetServer$;Server=$targetServer$;Initial Catalog=$targetDatabase$;Integrated Security=SSPI;Provider=SQLNCLI11;Packet Size=32737;" />
+    </Connections>
+    <Packages>
+$/ foreach load in loads
+        <Package Name="$load.qualified$" ConstraintMode="Linear" ProtectionLevel="EncryptSensitiveWithPassword" PackagePassword="sisula">
+            <Annotations>
+                <Annotation AnnotationType="Description">BIML generated: $generated$ by $username$ from: $computer$ in the $domain$ domain</Annotation>
+            </Annotations>
+            <Tasks>
+$/ if load.hasBefore
+                <ExecuteSQL Name="SQL Before" ConnectionName="$sourceDatabase$">
+                    <DirectInput>$load.before$</DirectInput>
+                </ExecuteSQL>
+$/ endif
+$/ if load.attributes
+                <ExecuteSQL Name="Disable triggers and constraints" ConnectionName="$targetDatabase$">
+                    <DirectInput>
+$/ foreach attr in load.attributes
+                    DISABLE TRIGGER ALL ON [$targetSchema$].[$attr.attribute$];
+                    ALTER TABLE [$targetSchema$].[$attr.attribute$] NOCHECK CONSTRAINT ALL;
+$/ endfor
+                    </DirectInput>
+                </ExecuteSQL>
+$/ endif
+$/ if load.hasKnots
+                <Dataflow Name="Load knots" EngineThreads="$load.knotThreads$">
+                    <Transformations>
+                        <OleDbSource Name="$load.source$" ConnectionName="$sourceDatabase$">
+                            <DirectInput>$load.loadingSql$</DirectInput>
+                        </OleDbSource>
+                        <Multicast Name="Split">
+                            <OutputPaths>
+$/ foreach attr in load.attributes where attr.hasKnot
+                                <OutputPath Name="$attr.attribute$"/>
+$/ endfor
+                            </OutputPaths>
+                        </Multicast>
+$/ foreach attr in load.attributes where attr.hasKnot
+                        <ConditionalSplit Name="$attr.attribute$__not_Null">
+                            <OutputPaths>
+                                <OutputPath Name="Values">
+                                    <Expression>!ISNULL([$attr.source$])</Expression>
+                                </OutputPath>
+                            </OutputPaths>
+                            <InputPath OutputPathName="Split.$attr.attribute$" />
+                        </ConditionalSplit>
+                        <Aggregate Name="$attr.attribute$__Unique" GroupByKeyScale="Low" AutoExtendFactor="100">
+                            <InputPath OutputPathName="$attr.attribute$__not_Null.Values" />
+                            <OutputPaths>
+                                <OutputPath Name="Values">
+                                    <Columns>
+                                        <Column Operation="GroupBy" SourceColumn="$attr.source$" TargetColumn="$attr.knot$"/>
+$/ if load.hasMetadata
+                                        <Column Operation="Minimum" SourceColumn="$load.metadataSource$" />
+$/ endif
+                                    </Columns>
+                                </OutputPath>
+                            </OutputPaths>
+                        </Aggregate>
+$/ endfor
+$/ foreach knot in load.knots
+                        <UnionAll Name="$knot.name$__Union">
+                            <InputPaths>
+$/ foreach map in knot.maps
+                                <InputPath OutputPathName="$map.attribute$__Unique.Values">
+                                    <Columns>
+                                        <Column SourceColumn="$map.source$"/>
+                                    </Columns>
+                                </InputPath>
+$/ endfor
+                            </InputPaths>
+                        </UnionAll>
+                        <Aggregate Name="$knot.name$__Unique" GroupByKeyScale="Low" AutoExtendFactor="100">
+                            <OutputPaths>
+                                <OutputPath Name="Values">
+                                    <Columns>
+                                        <Column Operation="GroupBy" SourceColumn="$knot.name$" TargetColumn="$knot.name$"/>
+$/ if load.hasMetadata
+                                        <Column Operation="Minimum" SourceColumn="$load.metadataSource$" />
+$/ endif
+                                    </Columns>
+                                </OutputPath>
+                            </OutputPaths>
+                        </Aggregate>
+                        <Lookup Name="$knot.name$__Lookup" NoMatchBehavior="RedirectRowsToNoMatchOutput" CacheMode="Full" OleDbConnectionName="$targetDatabase$">
+                            <ExternalTableInput Table="[$targetSchema$].[$knot.name$]" />
+                            <Inputs>
+                                <Column SourceColumn="$knot.name$" TargetColumn="$knot.name$" />
+                            </Inputs>
+                            <InputPath OutputPathName="$knot.name$__Unique.Values" />
+                        </Lookup>
+                        <OleDbDestination Name="$knot.name$" ConnectionName="$targetDatabase$" BatchSize="0" MaximumInsertCommitSize="0" KeepNulls="false" KeepIdentity="false" CheckConstraints="false" UseFastLoadIfAvailable="true" TableLock="true">
+                            <ErrorHandling ErrorRowDisposition="FailComponent" TruncationRowDisposition="FailComponent" />
+                            <ExternalTableOutput Table="[$targetSchema$].[$knot.name$]" />
+                            <InputPath OutputPathName="$knot.name$__Lookup.NoMatch" />
+                            <Columns>
+                                <Column SourceColumn="$knot.name$" TargetColumn="$knot.name$" />
+$/ if load.hasMetadata
+                                <Column SourceColumn="$load.metadataSource$" TargetColumn="Metadata_$knot.mnemonic$" />
+$/ endif
+                            </Columns>
+                        </OleDbDestination>
+$/ endfor
+                    </Transformations>
+                </Dataflow>
+$/ endif
+                <Dataflow Name="Load data" EngineThreads="$load.dataThreads$">
+                    <Transformations>
+$/ if load.noKeys
+                        <OleDbSource Name="$load.source$" ConnectionName="$sourceDatabase$">
+                            <DirectInput>$load.loadingSql$</DirectInput>
+                        </OleDbSource>
+$/ else
+$/ if load.naturalToAnchor
+                        <OleDbSource Name="$load.source$" ConnectionName="$sourceDatabase$">
+                            <DirectInput>
+                                DBCC TRACEON (610);
+                                DECLARE @known INT = 0;
+                                MERGE [$targetDatabase$].[$targetSchema$].[$load.targetTable$] [$load.anchorMnemonic$]
+                                USING (
+                                    SELECT
+                                        l.$load.anchorMnemonic$_ID,
+$/ foreach map in load.maps
+                                        t.$map.source$$/ if not map.last() ,$/ endif
+$/ endfor
+                                    FROM (
+                                        $load.loadingSql$
+                                    ) t
+                                    LEFT JOIN
+                                        [$targetDatabase$].[$targetSchema$].[$load.target$] l WITH (NOLOCK)
+                                    ON
+$/ foreach map in load.naturalKeys
+                                        t.$map.source$ = l.$map.target$ $/ if not map.last() AND$/ endif
+$/ endfor
+                                ) src
+                                ON
+                                    src.$load.anchorMnemonic$_ID = [$load.anchorMnemonic$].$load.anchorMnemonic$_ID
+$/ if load.hasMetadata
+                                WHEN NOT MATCHED THEN $--$
+                                INSERT ( Metadata_$load.anchorMnemonic$ )
+                                VALUES ( src.$load.metadataSource$ )
+$/ else
+                                WHEN NOT MATCHED THEN $--$
+                                INSERT ( $load.anchorMnemonic$_Dummy )
+                                VALUES ( null )
+$/ endif
+                                WHEN MATCHED THEN $--$
+                                UPDATE SET @known = @known + 1
+                                OUTPUT
+                                    isnull(src.$load.anchorMnemonic$_ID, inserted.$load.anchorMnemonic$_ID) as $load.anchorMnemonic$_ID,
+$/ foreach map in load.naturalSources
+                                    src.$map.source$,
+$/ endfor
+                                    left($action, 1) as __Operation;
+                            </DirectInput>
+                        </OleDbSource>
+$/ else
+$/ if load.surrogateToAnchor
+                        <OleDbSource Name="$load.source$" ConnectionName="$sourceDatabase$">
+                            <DirectInput>
+                                DBCC TRACEON (610);
+                                DECLARE @known INT = 0;
+                                MERGE [$targetDatabase$].[$targetSchema$].[$load.targetTable$] [$load.anchorMnemonic$]
+                                USING (
+                                    $load.loadingSql$
+                                ) src
+                                ON
+                                    src.$load.surrogateSource$ = [$load.anchorMnemonic$].$load.surrogateTarget$
+$/ if load.hasMetadata
+                                WHEN NOT MATCHED THEN $--$
+                                INSERT ( Metadata_$load.anchorMnemonic$ )
+                                VALUES ( src.$load.metadataSource$ )
+$/ else
+                                WHEN NOT MATCHED THEN $--$
+                                INSERT ( $load.anchorMnemonic$_Dummy )
+                                VALUES ( null )
+$/ endif
+                                WHEN MATCHED THEN $--$
+                                UPDATE SET @known = @known + 1
+                                OUTPUT
+                                    isnull(src.$load.surrogateSource$, inserted.$load.anchorMnemonic$_ID) as $load.anchorMnemonic$_ID,
+$/ foreach map in load.surrogateSources
+                                    src.$map.source$,
+$/ endfor
+$/ if load.hasMetadata
+                                    $load.metadataSource$,
+$/ endif
+                                    left($action, 1) as __Operation;
+                            </DirectInput>
+                        </OleDbSource>
+$/ endif
+$/ endif
+$/ endif
+$/ if load.attributes
+                        <ConditionalSplit Name="Known_Unknown">
+                            <OutputPaths>
+                                <OutputPath Name="Known">
+                                    <Expression>[__Operation]=="U"</Expression>
+                                </OutputPath>
+                                <OutputPath Name="Unknown">
+                                    <Expression>[__Operation]=="I"</Expression>
+                                </OutputPath>
+                            </OutputPaths>
+                        </ConditionalSplit>
+                        <Multicast Name="Split_Known">
+                            <OutputPaths>
+$/ foreach attr in load.attributes
+                                <OutputPath Name="$attr.attribute$"/>
+$/ endfor
+                            </OutputPaths>
+                            <InputPath OutputPathName="Known_Unknown.Known" />
+                        </Multicast>
+$/ foreach attr in load.attributes
+                        <ConditionalSplit Name="$attr.attribute$__Known_not_Null">
+                            <OutputPaths>
+                                <OutputPath Name="Values">
+                                    <Expression>!ISNULL([$attr.source$])</Expression>
+                                </OutputPath>
+                            </OutputPaths>
+                            <InputPath OutputPathName="Split_Known.$attr.attribute$" />
+                        </ConditionalSplit>
+$/ if attr.hasKnot
+                        <Lookup Name="$attr.attribute$__Known_Knot_Lookup" NoMatchBehavior="FailComponent" CacheMode="Full" OleDbConnectionName="$targetDatabase$">
+                            <ExternalTableInput Table="[$targetSchema$].[$attr.knot$]" />
+                            <Inputs>
+                                <Column SourceColumn="$attr.source$" TargetColumn="$attr.knot$" />
+                            </Inputs>
+                            <Outputs>
+                                <Column SourceColumn="$attr.knotMnemonic$_ID" />
+                            </Outputs>
+                            <InputPath OutputPathName="$attr.attribute$__Known_not_Null.Values" />
+                        </Lookup>
+$/ endif
+                        <Lookup Name="$attr.attribute$__Known_Lookup" NoMatchBehavior="RedirectRowsToNoMatchOutput" CacheMode="Partial" OleDbConnectionName="$targetDatabase$">
+$/ if attr.historized
+                            <DirectInput>
+                                SELECT $attr.anchorReference$, $attr.resolvedTarget$, $attr.mnemonic$_ChangedAt $--$
+                                FROM (
+                                    SELECT $attr.anchorReference$, $attr.resolvedTarget$, $attr.mnemonic$_ChangedAt,
+                                        LAST_VALUE($attr.mnemonic$_ChangedAt) OVER (
+                                            PARTITION BY $attr.anchorReference$ ORDER BY $attr.mnemonic$_ChangedAt RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING
+                                        ) as Last_ChangedAt
+                                    FROM
+                                        [$targetSchema$].[$attr.attribute$]
+                                ) a WHERE $attr.mnemonic$_ChangedAt = Last_ChangedAt
+                            </DirectInput>
+$/ else
+                            <ExternalTableInput Table="[$targetSchema$].[$attr.attribute$]" />
+$/ endif
+                            <Inputs>
+                                <Column SourceColumn="$attr.resolvedSource$" TargetColumn="$attr.resolvedTarget$" />
+                                <Column SourceColumn="$load.anchorMnemonic$_ID" TargetColumn="$attr.anchorReference$" />
+                            </Inputs>
+                            <InputPath OutputPathName="$attr.knownInput$" />
+                        </Lookup>
+                        <OleDbDestination Name="$attr.attribute$__Known" ConnectionName="$targetDatabase$" BatchSize="0" MaximumInsertCommitSize="0" FastLoadOptions="ORDER($attr.anchorReference$ ASC)" KeepNulls="false" KeepIdentity="false" CheckConstraints="false" UseFastLoadIfAvailable="true" TableLock="true">
+                            <ErrorHandling ErrorRowDisposition="FailComponent" TruncationRowDisposition="FailComponent" />
+                            <ExternalTableOutput Table="[$targetSchema$].[$attr.attribute$]" />
+                            <InputPath OutputPathName="$attr.attribute$__Known_Lookup.NoMatch" />
+                            <Columns>
+                                <Column SourceColumn="$load.anchorMnemonic$_ID" TargetColumn="$attr.anchorReference$" />
+                                <Column SourceColumn="$attr.resolvedSource$" TargetColumn="$attr.resolvedTarget$" />
+$/ foreach map in attr.related
+                                <Column SourceColumn="$map.source$" TargetColumn="$map.target$" />
+$/ endfor
+$/ if load.hasMetadata
+                                <Column SourceColumn="$load.metadataSource$" TargetColumn="Metadata_$attr.mnemonic$" />
+$/ endif
+                            </Columns>
+                        </OleDbDestination>
+$/ endfor
+                        <Multicast Name="Split_Unknown">
+                            <OutputPaths>
+$/ foreach attr in load.attributes
+                                <OutputPath Name="$attr.attribute$"/>
+$/ endfor
+                            </OutputPaths>
+                            <InputPath OutputPathName="Known_Unknown.Unknown" />
+                        </Multicast>
+$/ foreach attr in load.attributes
+                        <ConditionalSplit Name="$attr.attribute$__Unknown_not_Null">
+                            <OutputPaths>
+                                <OutputPath Name="Values">
+                                    <Expression>!ISNULL([$attr.source$])</Expression>
+                                </OutputPath>
+                            </OutputPaths>
+                            <InputPath OutputPathName="Split_Unknown.$attr.attribute$" />
+                        </ConditionalSplit>
+$/ if attr.hasKnot
+                        <Lookup Name="$attr.attribute$__Unknown_Knot_Lookup" NoMatchBehavior="FailComponent" CacheMode="Full" OleDbConnectionName="$targetDatabase$">
+                            <ExternalTableInput Table="[$targetSchema$].[$attr.knot$]" />
+                            <Inputs>
+                                <Column SourceColumn="$attr.source$" TargetColumn="$attr.knot$" />
+                            </Inputs>
+                            <Outputs>
+                                <Column SourceColumn="$attr.knotMnemonic$_ID" />
+                            </Outputs>
+                            <InputPath OutputPathName="$attr.attribute$__Unknown_not_Null.Values" />
+                        </Lookup>
+$/ endif
+                        <OleDbDestination Name="$attr.attribute$__Unknown" ConnectionName="$targetDatabase$" BatchSize="0" MaximumInsertCommitSize="0" FastLoadOptions="ORDER($attr.mnemonic$_$load.anchorMnemonic$_ID ASC)" KeepNulls="false" KeepIdentity="false" CheckConstraints="false" UseFastLoadIfAvailable="true" TableLock="true">
+                            <ErrorHandling ErrorRowDisposition="FailComponent" TruncationRowDisposition="FailComponent" />
+                            <ExternalTableOutput Table="[$targetSchema$].[$attr.attribute$]" />
+                            <InputPath OutputPathName="$attr.unknownInput$" />
+                            <Columns>
+                                <Column SourceColumn="$load.anchorMnemonic$_ID" TargetColumn="$attr.anchorReference$" />
+                                <Column SourceColumn="$attr.resolvedSource$" TargetColumn="$attr.resolvedTarget$" />
+$/ foreach map in attr.related
+                                <Column SourceColumn="$map.source$" TargetColumn="$map.target$" />
+$/ endfor
+$/ if load.hasMetadata
+                                <Column SourceColumn="$load.metadataSource$" TargetColumn="Metadata_$attr.mnemonic$" />
+$/ endif
+                            </Columns>
+                        </OleDbDestination>
+$/ endfor
+$/ endif
+                    </Transformations>
+                </Dataflow>
+$/ if load.attributes
+                <ExecuteSQL Name="Enable triggers and constraints" ConnectionName="$targetDatabase$">
+                    <DirectInput>
+$/ foreach attr in load.attributes
+                    ENABLE TRIGGER ALL ON [$targetSchema$].[$attr.attribute$];
+                    ALTER TABLE [$targetSchema$].[$attr.attribute$] WITH NOCHECK CHECK CONSTRAINT ALL;
+$/ endfor
+                    </DirectInput>
+                </ExecuteSQL>
+$/ endif
+$/ if load.hasAfter
+                <ExecuteSQL Name="SQL After" ConnectionName="$sourceDatabase$">
+                    <DirectInput>$load.after$</DirectInput>
+                </ExecuteSQL>
+$/ endif
+            </Tasks>
+        </Package>
+$/ endfor
+    </Packages>
+</Biml>

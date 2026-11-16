@@ -1,0 +1,124 @@
+------------------------------- other -------------------------------
+USE msdb;
+GO
+DECLARE @AgentJobID uniqueidentifier = (
+    select job_id from [dbo].[sysjobs] where name = 'other'
+);
+IF (@AgentJobID is null)
+BEGIN
+    EXEC sp_add_job
+        -- mandatory parameters below and optional ones above this line
+        @job_name = 'other',
+        -- capture the newly created job id
+        @job_id = @AgentJobID OUTPUT;
+    EXEC sp_add_jobserver
+        -- mandatory parameters below and optional ones above this line
+        @job_name = 'other';
+END
+ELSE
+BEGIN
+    -- deleting the magical step 0 removes all job steps (this is documented behavior)
+    EXEC sp_delete_jobstep @job_Id = @AgentJobID, @step_id = 0;
+END
+EXEC sp_add_jobstep
+    @command = 'SELECT 1',
+    -- mandatory parameters below and optional ones above this line
+    @job_id = @AgentJobID,
+    @step_name = 'only';
+GO
+-- end of job creation
+<WORKFLOW-END>------------------------------- Edge_workflow -------------------------------
+USE msdb;
+GO
+DECLARE @AgentJobID uniqueidentifier = (
+    select job_id from [dbo].[sysjobs] where name = 'Edge_first'
+);
+IF (@AgentJobID is null)
+BEGIN
+    EXEC sp_add_job
+        @enabled = 0,
+        @description = 'description',
+        @start_step_id = 0,
+        @category_name = 'test',
+        @category_id = 0,
+        @notify_level_eventlog = 0,
+        @notify_level_email = 0,
+        @notify_level_netsend = 0,
+        @notify_level_page = 0,
+        @notify_email_operator_name = 'email',
+        @notify_netsend_operator_name = 'netsend',
+        @notify_page_operator_name = 'page',
+        @delete_level = 0,
+        @owner_login_name = owner,
+        -- mandatory parameters below and optional ones above this line
+        @job_name = 'Edge_first',
+        -- capture the newly created job id
+        @job_id = @AgentJobID OUTPUT;
+    EXEC sp_add_jobserver
+        -- mandatory parameters below and optional ones above this line
+        @job_name = 'Edge_first';
+END
+ELSE
+BEGIN
+    -- deleting the magical step 0 removes all job steps (this is documented behavior)
+    EXEC sp_delete_jobstep @job_Id = @AgentJobID, @step_id = 0;
+END
+EXEC sp_add_jobstep
+    @step_id = 0,
+    @subsystem = 'TSQL',
+    @command = 'select ''job'', ''$value$'', ''O''''Brien'';',
+    @additional_parameters = 'params',
+    @cmdexec_success_code = 0,
+    @server = 'server',
+    @database_name = 'db',
+    @database_user_name = 'user',
+    @retry_attempts = 0,
+    @retry_interval = 0,
+    @os_run_priority = 0,
+    @output_file_name = 'file',
+    @flags = 0,
+    @proxy_id = 0,
+    @proxy_name = 'proxy',
+    @on_fail_action = 0,
+    @on_fail_step_id = 0,
+    @on_success_action = 3,
+    @on_success_step_id = 0,
+    -- mandatory parameters below and optional ones above this line
+    @job_id = @AgentJobID,
+    @step_name = 'one';
+EXEC sp_add_jobstep
+    @subsystem = 'PowerShell',
+    @command = 'Write-Output ''job''',
+    @flags = 0,
+    -- mandatory parameters below and optional ones above this line
+    @job_id = @AgentJobID,
+    @step_name = 'two';
+GO
+-- end of job creation
+DECLARE @AgentJobID uniqueidentifier = (
+    select job_id from [dbo].[sysjobs] where name = 'second'
+);
+IF (@AgentJobID is null)
+BEGIN
+    EXEC sp_add_job
+        -- mandatory parameters below and optional ones above this line
+        @job_name = 'second',
+        -- capture the newly created job id
+        @job_id = @AgentJobID OUTPUT;
+    EXEC sp_add_jobserver
+        -- mandatory parameters below and optional ones above this line
+        @job_name = 'second';
+END
+ELSE
+BEGIN
+    -- deleting the magical step 0 removes all job steps (this is documented behavior)
+    EXEC sp_delete_jobstep @job_Id = @AgentJobID, @step_id = 0;
+END
+EXEC sp_add_jobstep
+    @subsystem = 'TSQL',
+    @command = 'select ''workflow'';',
+    -- mandatory parameters below and optional ones above this line
+    @job_id = @AgentJobID,
+    @step_name = 'other';
+GO
+-- end of job creation

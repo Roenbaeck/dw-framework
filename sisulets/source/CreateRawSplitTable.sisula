@@ -1,0 +1,53 @@
+$/ if isBulk
+-- Dropping raw split table to enforce Deferred Name Resolution: $source.qualified$_RawSplit
+IF Object_ID('$sourceSchema$.$source.qualified$_RawSplit', 'U') IS NOT NULL
+DROP TABLE [$sourceSchema$].[$source.qualified$_RawSplit];
+
+IF Object_ID('$sourceSchema$.$source.qualified$_CreateRawSplitTable', 'P') IS NOT NULL
+DROP PROCEDURE [$sourceSchema$].[$source.qualified$_CreateRawSplitTable];
+GO
+
+--------------------------------------------------------------------------
+-- Procedure: $source.qualified$_CreateRawSplitTable
+--
+-- The split table is populated by a bulk insert with a format file that
+-- split rows from the source file into columns.
+--
+-- Create: $source.firstPart.qualified$_RawSplit
+--
+-- Generated: $generated$ by $username$
+-- From: $computer$ in the $domain$ domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [$sourceSchema$].[$source.qualified$_CreateRawSplitTable] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+$sourceMeta.beginRawSplit$
+    IF Object_ID('$sourceSchema$.$source.qualified$_RawSplit', 'U') IS NOT NULL
+    DROP TABLE [$sourceSchema$].[$source.qualified$_RawSplit];
+    EXEC('
+    CREATE TABLE [$sourceSchema$].[$source.qualified$_RawSplit] (
+        _id int identity(1,1) not null,
+        _file AS metadata_CO_ID, -- keep an alias for backwards compatibility
+        metadata_CO_ID int not null default 0,
+        metadata_JB_ID int not null default 0,
+        _timestamp datetime not null default $timestamp$,
+$/ foreach term in source.firstPart.terms
+$/ if isChar
+        [$term.name$] varchar($source.rowlength$), $--$
+$/ else
+        [$term.name$] nvarchar($source.rowlength$),
+$/ endif
+$/ endfor
+        constraint [pk$sourceSchema$_$source.qualified$_RawSplit] primary key (
+            _id asc
+        )
+    )
+    ');
+$sourceMeta.end$
+END
+GO
+$/ endif

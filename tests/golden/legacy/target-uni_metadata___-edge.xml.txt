@@ -1,0 +1,222 @@
+IF Object_ID('dbo.InsertTable__StageInsert', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[InsertTable__StageInsert];
+GO
+--------------------------------------------------------------------------
+-- Procedure: InsertTable__StageInsert
+-- Source: StageInsert
+-- Target: InsertTable (insert)
+--
+-- Map: s1 to Natural (as natural key)
+-- Map: s2 to Surrogate (as surrogate key)
+-- Map: s3 to Metadata (as metadata)
+-- Map: s4 to Value
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[InsertTable__StageInsert] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+DECLARE @inserts int;
+DECLARE @updates int;
+DECLARE @deletes int;
+DECLARE @actions TABLE (
+    [action] char(1) not null
+);
+    -- Perform the actual insert ----------------------
+    INSERT INTO [DW].[dbo].[InsertTable] (
+        [Natural],
+        [Surrogate],
+        [Metadata],
+        [Value]
+    )
+    SELECT
+        [source].[s1],
+        [source].[s2],
+        [source].[s3],
+        [source].[s4]
+    FROM
+        StageInsert AS [source];
+    SET @inserts = NULLIF(@@ROWCOUNT + COALESCE(@inserts, 0), 0);
+END
+GO
+IF Object_ID('dbo.InsertQuery__StageQuery', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[InsertQuery__StageQuery];
+GO
+--------------------------------------------------------------------------
+-- Procedure: InsertQuery__StageQuery
+-- Source: StageQuery
+-- Target: InsertQuery (insert)
+--
+-- Map: s1 to Value
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[InsertQuery__StageQuery] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+DECLARE @inserts int;
+DECLARE @updates int;
+DECLARE @deletes int;
+DECLARE @actions TABLE (
+    [action] char(1) not null
+);
+    -- Perform the actual insert ----------------------
+    INSERT INTO [DW].[dbo].[InsertQuery] (
+        [Value]
+    )
+    SELECT
+        [source].[s1]
+    FROM (
+        select 'O''Brien' as s1
+    ) AS [source];
+    SET @inserts = NULLIF(@@ROWCOUNT + COALESCE(@inserts, 0), 0);
+END
+GO
+IF Object_ID('dbo.MergeTable__StageMerge', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[MergeTable__StageMerge];
+GO
+--------------------------------------------------------------------------
+-- Procedure: MergeTable__StageMerge
+-- Source: StageMerge
+-- Target: MergeTable (merge)
+--
+-- Map: s1 to Key (as natural key)
+-- Map: s2 to StaticField [D] (as static)
+-- Map: s3 to ValueField [D]
+-- Map: s4 to HistoryField (as history)
+-- Map: s5 to OpinionField (as opinion)
+-- Map: s6 to Metadata (as metadata)
+--
+-- [D] marks deletable attributes
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[MergeTable__StageMerge] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+DECLARE @inserts int;
+DECLARE @updates int;
+DECLARE @deletes int;
+DECLARE @actions TABLE (
+    [action] char(1) not null
+);
+    -- Preparations before the merge -----------------
+    select 'before';
+    -- Perform the actual merge ----------------------
+    MERGE INTO [DW].[dbo].[MergeTable] AS [target]
+    USING (
+        select s1, s2 from StageMerge
+    ) AS [source]
+    ON (
+        [source].[s1] = [target].[Key]
+    AND (
+        [source].[s1] > 0
+        )
+    )
+    WHEN NOT MATCHED THEN INSERT (
+        [Key],
+        [StaticField],
+        [ValueField],
+        [HistoryField],
+        [Metadata]
+    )
+    VALUES (
+        [source].[s1],
+        [source].[s2],
+        [source].[s3],
+        [source].[s4],
+        [source].[s6]
+    )
+    WHEN MATCHED AND (
+        ([target].[StaticField] is not null AND [source].[s2] is null)
+    OR
+        ([target].[StaticField] is null)
+    OR
+        ([target].[ValueField] is not null AND [source].[s3] is null)
+    OR
+        ([target].[ValueField] is null OR [source].[s3] <> [target].[ValueField])
+    )
+    THEN UPDATE
+    SET
+        [target].[Deletable_Static] = 1,
+        [target].[StaticField] =
+            CASE
+                WHEN ([target].[StaticField] is null)
+                THEN [source].[s2]
+                ELSE [target].[StaticField]
+            END,
+        [target].[Deletable_ValueF] = 1,
+        [target].[ValueField] = [source].[s3],
+        [target].[HistoryField] = [source].[s4],
+        [target].[Metadata] = [source].[s6]
+    OUTPUT
+        LEFT($action, 1) INTO @actions;
+    -- workaround for "Protocol error in TDS stream" bug
+    SELECT
+        @inserts = NULLIF(SUM(CASE WHEN [action] = 'I' THEN 1 ELSE 0 END), 0),
+        @updates = NULLIF(SUM(CASE WHEN [action] = 'U' THEN 1 ELSE 0 END), 0),
+        @deletes = NULLIF(SUM(CASE WHEN [action] = 'D' THEN 1 ELSE 0 END), 0)
+    FROM
+        @actions;
+    -- Post processing after the merge ---------------
+    select 'after';
+END
+GO
+IF Object_ID('dbo.KeysOnly__StageKeys', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[KeysOnly__StageKeys];
+GO
+--------------------------------------------------------------------------
+-- Procedure: KeysOnly__StageKeys
+-- Source: StageKeys
+-- Target: KeysOnly (merge)
+--
+-- Map: s1 to Key (as surrogate key)
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[KeysOnly__StageKeys] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+DECLARE @inserts int;
+DECLARE @updates int;
+DECLARE @deletes int;
+DECLARE @actions TABLE (
+    [action] char(1) not null
+);
+    -- Perform the actual merge ----------------------
+    MERGE INTO [DW].[dbo].[KeysOnly] AS [target]
+    USING
+        StageKeys AS [source]
+    ON (
+        [source].[s1] = [target].[Key]
+    )
+    OUTPUT
+        LEFT($action, 1) INTO @actions;
+    -- workaround for "Protocol error in TDS stream" bug
+    SELECT
+        @inserts = NULLIF(SUM(CASE WHEN [action] = 'I' THEN 1 ELSE 0 END), 0),
+        @updates = NULLIF(SUM(CASE WHEN [action] = 'U' THEN 1 ELSE 0 END), 0),
+        @deletes = NULLIF(SUM(CASE WHEN [action] = 'D' THEN 1 ELSE 0 END), 0)
+    FROM
+        @actions;
+END
+GO

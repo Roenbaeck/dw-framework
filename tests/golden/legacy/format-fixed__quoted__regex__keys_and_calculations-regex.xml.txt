@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<BCPFORMAT
+xmlns="http://schemas.microsoft.com/sqlserver/2004/bulkload/format"
+   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+   <RECORD>
+      <FIELD xsi:type="CharFixed" ID="Fixed" LENGTH="3" />
+      <FIELD xsi:type="CharTerm" ID="Delimited" TERMINATOR="'" />
+      <FIELD xsi:type="CharTerm" ID="Pattern" TERMINATOR="" />
+      <FIELD xsi:type="CharTerm" ID="Rest" TERMINATOR="|" />
+   </RECORD>
+   <ROW>
+      <COLUMN SOURCE="Fixed" NAME="Fixed" xsi:type="SQLVARYCHAR" />
+      <COLUMN SOURCE="Delimited" NAME="Delimited" xsi:type="SQLVARYCHAR" />
+      <COLUMN SOURCE="Pattern" NAME="Pattern" xsi:type="SQLVARYCHAR" />
+      <COLUMN SOURCE="Rest" NAME="Rest" xsi:type="SQLVARYCHAR" />
+   </ROW>
+</BCPFORMAT>

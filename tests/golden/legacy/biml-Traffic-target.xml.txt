@@ -1,0 +1,212 @@
+<Biml xmlns="http://schemas.varigence.com/biml.xsd">
+    <Connections>
+        <OleDbConnection Name="Stage" ConnectionString="Data Source=;Server=;Initial Catalog=Stage;Integrated Security=SSPI;Provider=SQLNCLI11;Packet Size=32737;" />
+        <OleDbConnection Name="Traffic" ConnectionString="Data Source=;Server=;Initial Catalog=Traffic;Integrated Security=SSPI;Provider=SQLNCLI11;Packet Size=32737;" />
+    </Connections>
+    <Packages>
+        <Package Name="lST_Street__NYPD_Vehicle_Collision_Typed" ConstraintMode="Linear" ProtectionLevel="EncryptSensitiveWithPassword" PackagePassword="sisula">
+            <Annotations>
+                <Annotation AnnotationType="Description">BIML generated: <timestamp> by test-user from: test-computer in the test-domain domain</Annotation>
+            </Annotations>
+            <Tasks>
+                <ExecuteSQL Name="SQL Before" ConnectionName="Stage">
+                    <DirectInput>-- preparations can be put here</DirectInput>
+                </ExecuteSQL>
+                <Dataflow Name="Load data" EngineThreads="1">
+                    <Transformations>
+                        <OleDbSource Name="NYPD_Vehicle_Collision_Typed" ConnectionName="Stage">
+                            <DirectInput>
+                                DBCC TRACEON (610);
+                                DECLARE @known INT = 0;
+                                MERGE [Traffic].[dbo].[ST_Street] [ST]
+                                USING (
+                                    SELECT
+                                        l.ST_ID,
+                                        t.StreetName,
+                                        t.metadata_CO_ID
+                                    FROM (
+                                        select
+            StreetName, 
+            min(metadata_CO_ID) as metadata_CO_ID
+        from (
+            select distinct
+                IntersectingStreet as StreetName,
+                metadata_CO_ID
+            from 
+                etl.NYPD_Vehicle_Collision_Typed
+            union 
+            select distinct
+                CrossStreet as StreetName,
+                metadata_CO_ID
+            from
+                etl.NYPD_Vehicle_Collision_Typed
+        ) s
+        group by
+            StreetName
+                                    ) t
+                                    LEFT JOIN
+                                        [Traffic].[dbo].[lST_Street] l WITH (NOLOCK)
+                                    ON
+                                        t.StreetName = l.ST_NAM_Street_Name 
+                                ) src
+                                ON
+                                    src.ST_ID = [ST].ST_ID
+                                WHEN NOT MATCHED THEN 
+                                INSERT ( Metadata_ST )
+                                VALUES ( src.metadata_CO_ID )
+                                WHEN MATCHED THEN 
+                                UPDATE SET @known = @known + 1
+                                OUTPUT
+                                    isnull(src.ST_ID, inserted.ST_ID) as ST_ID,
+                                    src.StreetName,
+                                    src.metadata_CO_ID,
+                                    left($action, 1) as __Operation;
+                            </DirectInput>
+                        </OleDbSource>
+                    </Transformations>
+                </Dataflow>
+                <ExecuteSQL Name="SQL After" ConnectionName="Stage">
+                    <DirectInput>-- post processing can be put here</DirectInput>
+                </ExecuteSQL>
+            </Tasks>
+        </Package>
+        <Package Name="lIS_Intersection__NYPD_Vehicle_Collision_Typed__1" ConstraintMode="Linear" ProtectionLevel="EncryptSensitiveWithPassword" PackagePassword="sisula">
+            <Annotations>
+                <Annotation AnnotationType="Description">BIML generated: <timestamp> by test-user from: test-computer in the test-domain domain</Annotation>
+            </Annotations>
+            <Tasks>
+                <Dataflow Name="Load data" EngineThreads="1">
+                    <Transformations>
+                        <OleDbSource Name="NYPD_Vehicle_Collision_Typed" ConnectionName="Stage">
+                            <DirectInput>
+                                DBCC TRACEON (610);
+                                DECLARE @known INT = 0;
+                                MERGE [Traffic].[dbo].[IS_Intersection] [IS]
+                                USING (
+                                    select 
+            src.IntersectingStreet,
+            src.CrossStreet,
+            src.metadata_CO_ID,
+            stst.IS_ID_of
+        from (
+            select 
+                IntersectingStreet,
+                CrossStreet,
+                min(metadata_CO_ID) as metadata_CO_ID
+            from
+                etl.NYPD_Vehicle_Collision_Typed 
+            group by
+                IntersectingStreet,
+                CrossStreet 
+        ) src
+        left join
+            [Traffic].dbo.lST_Street st_i
+        on
+            st_i.ST_NAM_Street_Name = src.IntersectingStreet
+        left join
+            [Traffic].dbo.lST_Street st_c
+        on
+            st_c.ST_NAM_Street_Name = src.CrossStreet
+        left join
+            [Traffic].dbo.ST_intersecting_IS_of_ST_crossing stst
+        on
+            stst.ST_ID_intersecting = st_i.ST_ID
+        and
+            stst.ST_ID_crossing = st_c.ST_ID
+                                ) src
+                                ON
+                                    src.IS_ID_of = [IS].IS_ID
+                                WHEN NOT MATCHED THEN 
+                                INSERT ( Metadata_IS )
+                                VALUES ( src.metadata_CO_ID )
+                                WHEN MATCHED THEN 
+                                UPDATE SET @known = @known + 1
+                                OUTPUT
+                                    isnull(src.IS_ID_of, inserted.IS_ID) as IS_ID,
+                                    src.metadata_CO_ID,
+                                    metadata_CO_ID,
+                                    left($action, 1) as __Operation;
+                            </DirectInput>
+                        </OleDbSource>
+                    </Transformations>
+                </Dataflow>
+            </Tasks>
+        </Package>
+        <Package Name="lST_intersecting_IS_of_ST_crossing__NYPD_Vehicle_Collision_Typed" ConstraintMode="Linear" ProtectionLevel="EncryptSensitiveWithPassword" PackagePassword="sisula">
+            <Annotations>
+                <Annotation AnnotationType="Description">BIML generated: <timestamp> by test-user from: test-computer in the test-domain domain</Annotation>
+            </Annotations>
+            <Tasks>
+                <Dataflow Name="Load data" EngineThreads="1">
+                    <Transformations>
+                    </Transformations>
+                </Dataflow>
+            </Tasks>
+        </Package>
+        <Package Name="lIS_Intersection__NYPD_Vehicle_Collision_Typed__2" ConstraintMode="Linear" ProtectionLevel="EncryptSensitiveWithPassword" PackagePassword="sisula">
+            <Annotations>
+                <Annotation AnnotationType="Description">BIML generated: <timestamp> by test-user from: test-computer in the test-domain domain</Annotation>
+            </Annotations>
+            <Tasks>
+                <Dataflow Name="Load data" EngineThreads="1">
+                    <Transformations>
+                        <OleDbSource Name="NYPD_Vehicle_Collision_Typed" ConnectionName="Stage">
+                            <DirectInput>
+                                DBCC TRACEON (610);
+                                DECLARE @known INT = 0;
+                                MERGE [Traffic].[dbo].[IS_Intersection] [IS]
+                                USING (
+                                    select
+            md.ChangedAt,
+            stst.IS_ID_of,
+            count(*) as CollisionCount,
+            sum(src.CollisionVehicleCount) as CollisionVehicleCount,
+            sum(src.CollisionInjuredCount) as CollisionInjuredCount,
+            sum(src.CollisionKilledCount) as CollisionKilledCount
+        from
+            etl.NYPD_Vehicle_Collision_Typed src
+        join
+            etl.NYPD_Vehicle_CollisionMetadata_Typed md
+        on
+            md.metadata_CO_ID = src.metadata_CO_ID
+        join
+            [Traffic].dbo.lST_Street st_i
+        on
+            st_i.ST_NAM_Street_Name = src.IntersectingStreet
+        join
+            [Traffic].dbo.lST_Street st_c
+        on
+            st_c.ST_NAM_Street_Name = src.CrossStreet
+        join
+            [Traffic].dbo.ST_intersecting_IS_of_ST_crossing stst
+        on
+            stst.ST_ID_intersecting = st_i.ST_ID
+        and
+            stst.ST_ID_crossing = st_c.ST_ID
+        group by
+            md.ChangedAt,
+            stst.IS_ID_of
+                                ) src
+                                ON
+                                    src.IS_ID_of = [IS].IS_ID
+                                WHEN NOT MATCHED THEN 
+                                INSERT ( IS_Dummy )
+                                VALUES ( null )
+                                WHEN MATCHED THEN 
+                                UPDATE SET @known = @known + 1
+                                OUTPUT
+                                    isnull(src.IS_ID_of, inserted.IS_ID) as IS_ID,
+                                    src.CollisionCount,
+                                    src.ChangedAt,
+                                    src.CollisionVehicleCount,
+                                    src.CollisionInjuredCount,
+                                    src.CollisionKilledCount,
+                                    left($action, 1) as __Operation;
+                            </DirectInput>
+                        </OleDbSource>
+                    </Transformations>
+                </Dataflow>
+            </Tasks>
+        </Package>
+    </Packages>
+</Biml>

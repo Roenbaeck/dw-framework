@@ -1,0 +1,14 @@
+# Declarative source SQL templates, rendered in order with the resolved source bindings.
+sisulets\source\UseDatabase.sisula
+sisulets\source\CreateSchema.sisula
+sisulets\source\CreateUtilities.sisula
+sisulets\source\CreateRawTable.sisula
+sisulets\source\CreateRawSplitTable.sisula
+sisulets\source\CreateInsertView.sisula
+sisulets\source\BulkInsert.sisula
+sisulets\source\CreateSplitViews.sisula
+sisulets\source\CreateErrorViews.sisula
+sisulets\source\CreateTypedTables.sisula
+sisulets\source\SplitRawIntoTyped.sisula
+sisulets\source\AddKeysToTyped.sisula
+sisulets\source\AddSourceDefinition.sisula

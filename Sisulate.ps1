@@ -1,7 +1,7 @@
 #
 # Sisulator.ps1 - Modern PowerShell-based ETL Generation Tool (Jint Edition)
 #
-# Replaces the legacy Sisulate.bat and Sisulator.hta with a single, self-contained script.
+# Runs the declarative Sisula templates with the bundled Jint JavaScript engine.
 # Uses Jint JavaScript engine instead of headless Edge for better enterprise compatibility.
 #
 # Version: 2.0.3 (Optimized & Bundled)
@@ -18,8 +18,8 @@ param(
     [Parameter(Position = 2, HelpMessage = "Optional. Filters to run only specific parts: S=sources, T=targets, W=workflows.")]
     [string]$Filters = "STW", # Default from the original batch file
 
-    [ValidateSet("Sisulator", "Sisula")]
-    [string]$Renderer = "Sisulator"
+    [ValidateSet("Sisula")]
+    [string]$Renderer = "Sisula"
 )
 
 $VERSION = "2.0.3"
@@ -103,106 +103,26 @@ function Import-VariablesFromBatchFile {
     return $variableMap
 }
 
-#-------------------------------------------------------------------
-# Helper Function to run a Sisulator transformation using Jint
-#-------------------------------------------------------------------
-# --- REFACTORED ---
-# The function now accepts a pre-configured Jint engine as a parameter.
-function Invoke-Sisulation {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]
-        [Jint.Engine]$Engine,
-
-        [Parameter(Mandatory = $true)]
-        [string]$XmlFilePath,
-
-        [Parameter(Mandatory = $true)]
-        [string]$MappingType,
-        
-        [Parameter(Mandatory = $true)]
-        [string]$DirectiveFilePath,
-
-        [Parameter(Mandatory = $true)]
-        [hashtable]$ContextVariables
-    )
-
-    try {
-        # 1. Prepare per-file content in PowerShell
-        $xmlContentAsString = Get-Content -Raw -Path $XmlFilePath -Encoding UTF8
-        $xmlDoc = [xml]$xmlContentAsString
-        
-        $resolvedDirectivePath = Resolve-Path -Path $DirectiveFilePath
-        $directiveBasePath = Split-Path -Path $resolvedDirectivePath -Parent
-        $sisuletFiles = Get-Content -Path $resolvedDirectivePath | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith("#") }
-        $directiveContent = foreach ($file in $sisuletFiles) {
-            $sisuletPath = Join-Path -Path $directiveBasePath -ChildPath $file.Trim()
-            if (-not (Test-Path $sisuletPath)) {
-                throw "The template file specified in '$($resolvedDirectivePath.split('\')[-1])' could not be found at path: $sisuletPath"
-            }
-            Get-Content -Path $sisuletPath -Raw -Encoding UTF8
-        }
-        $directiveContent = $directiveContent -join [Environment]::NewLine
-
-        # --- REFACTORED ---
-        # Engine creation and library loading are now done outside this function.
-        # We only set the values that change for each file.
-
-        # 2. Set up the transformation parameters in the existing engine's global scope
-        $Engine.SetValue("xmlDoc", $xmlDoc) | Out-Null
-        $Engine.SetValue("mappingType", $MappingType) | Out-Null
-        $Engine.SetValue("directiveContent", $directiveContent) | Out-Null
-        $Engine.SetValue("variablesHashtable", $ContextVariables) | Out-Null
-
-        # 3. Execute the transformation
-        $jsExecutionCode = @"
-try {
-    var result = Sisulator.sisulate(); 
-    result;
-} catch (error) {
-    throw new Error('Transformation failed: ' + error.message + ' Stack: ' + (error.stack || 'no stack'));
-}
-"@
-        try {
-            $result = $Engine.Execute($jsExecutionCode)
-            $completionValue = $result.GetCompletionValue()
-            
-            if ($null -eq $completionValue) {
-                throw "JavaScript execution returned null result"
-            }
-            
-            return $completionValue.AsString()
-        }
-        catch [Jint.Runtime.JavaScriptException] {
-            $jsError = $_.Exception
-            throw "JavaScript execution error: $($jsError.Message) at line $($jsError.LineNumber)."
-        }
-        catch {
-            throw "Failed to execute JavaScript: $($_.Exception.Message)."
-        }
-    }
-    catch {
-        throw "JavaScript transformation failed: $($_.Exception.Message)"
-    }
-}
-
-function Invoke-WorkflowSisula {
+function Invoke-SisulaTransformation {
     param(
         [Jint.Engine]$Engine,
         [string]$XmlFilePath,
-        [hashtable]$ContextVariables
+        [hashtable]$ContextVariables,
+        [ValidateSet("Biml", "Format", "Source", "Target", "Workflow")]
+        [string]$Kind
     )
 
     $xmlDoc = [xml](Get-Content -Raw -Path $XmlFilePath -Encoding UTF8 -ErrorAction Stop)
     $Engine.SetValue("xmlDoc", $xmlDoc) | Out-Null
     $Engine.SetValue("variablesHashtable", $ContextVariables) | Out-Null
     try {
-        $Engine.Execute("var workflowBindingsJson = workflowBindings();") | Out-Null
-        $directive = Join-Path $PSScriptRoot "workflow.sisula.directive"
+        $bindingFunction = $Kind.ToLowerInvariant() + "Bindings"
+        $Engine.Execute("var sisulaBindingsJson = $bindingFunction();") | Out-Null
+        $directive = Join-Path $PSScriptRoot ($Kind.ToLowerInvariant() + ".sisula.directive")
         $entries = @(Get-Content -Path $directive -Encoding UTF8 -ErrorAction Stop |
             Where-Object { $_.Trim() -and -not $_.Trim().StartsWith("#") })
         if ($entries.Count -eq 0) { throw "No templates listed in '$directive'." }
-        $Engine.Execute("var workflowOutput = '';") | Out-Null
+        $Engine.Execute("var sisulaOutput = '';") | Out-Null
         foreach ($entry in $entries) {
             $templatePath = Join-Path $PSScriptRoot $entry.Trim()
             if ([IO.Path]::GetExtension($templatePath) -ne '.sisula') {
@@ -212,22 +132,84 @@ function Invoke-WorkflowSisula {
                 throw "Template '$templatePath' listed in '$directive' was not found."
             }
             $template = [IO.File]::ReadAllText($templatePath, [Text.Encoding]::UTF8)
-            $Engine.SetValue("workflowTemplate", $template) | Out-Null
+            $Engine.SetValue("sisulaTemplate", $template) | Out-Null
             try {
-                $Engine.Execute("workflowOutput += sisulate(workflowTemplate, workflowBindingsJson);") | Out-Null
+                $Engine.Execute("sisulaOutput += sisulate(sisulaTemplate, sisulaBindingsJson);") | Out-Null
             }
             catch {
                 throw "Template '$templatePath' failed: $($_.Exception.Message)"
             }
         }
         $Engine.Execute(@'
-workflowOutput = workflowOutput.replace(/^\s*[\r\n]/gm, '').replace(/(\S+[^\S\n])(?:[^\S\n]+)/gm, '$1');
+sisulaOutput = sisulaOutput.replace(/\u00a7DOLLAR\u00a7/g, '$').replace(/\u00a7SINGLE\u00a7/g, '"')
+    .replace(/\u00a7QUOTED\u00a7/g, '"').replace(/^\s*[\r\n]/gm, '')
+    .replace(/(\S+[^\S\n])(?:[^\S\n]+)/gm, '$1');
 '@) | Out-Null
-        return $Engine.GetValue("workflowOutput").AsString()
+        return $Engine.GetValue("sisulaOutput").AsString()
     }
     catch {
-        throw "Sisula workflow transformation failed for '$XmlFilePath': $($_.Exception.Message)"
+        throw "Sisula $Kind transformation failed for '$XmlFilePath': $($_.Exception.Message)"
     }
+}
+
+function Initialize-SisulaBindings {
+    param(
+        [Jint.Engine]$Engine,
+        [ValidateSet("Biml", "Format", "Source", "Target", "Workflow")]
+        [string]$Kind
+    )
+
+    if ($Kind -eq "Workflow") {
+        $root = "workflow"
+        $map = "Workflow"
+        $files = @("sisulets\Variables.js", "sisulets\workflow\Variables.js", "sisulets\workflow\Bindings.js")
+    }
+    elseif ($Kind -eq "Format" -or $Kind -eq "Source") {
+        $root = "source"
+        $map = "Source"
+        $files = @("sisulets\Polyfills.js", "sisulets\Variables.js", "sisulets\source\Variables.js",
+            "sisulets\source\Helpers.js", "sisulets\source\Naming.js")
+        if ($Kind -eq "Format") {
+            $files += "sisulets\format\Bindings.js"
+        }
+        else {
+            $files += "sisulets\source\Bindings.js"
+            foreach ($name in @("Begin", "End", "SourceToTarget")) {
+                $path = Join-Path $PSScriptRoot ("sisulets\source\Metadata" + $name + ".sisula")
+                $Engine.SetValue(("sourceMetadata" + $name + "Template"),
+                    [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8)) | Out-Null
+            }
+        }
+    }
+    elseif ($Kind -eq "Target") {
+        $root = "target"
+        $map = "Target"
+        $files = @("sisulets\Polyfills.js", "sisulets\Variables.js", "sisulets\target\Variables.js",
+            "sisulets\target\Helpers.js", "sisulets\target\Naming.js", "sisulets\target\Bindings.js")
+    }
+    else {
+        $root = "target"
+        $map = "Target"
+        $files = @("sisulets\Polyfills.js", "sisulets\Variables.js", "sisulets\biml\Variables.js",
+            "sisulets\target\Helpers.js", "sisulets\biml\Helpers.js", "sisulets\biml\Naming.js",
+            "sisulets\biml\Bindings.js")
+    }
+    $prelude = @(
+        foreach ($file in $files) {
+            [IO.File]::ReadAllText((Join-Path $PSScriptRoot $file), [Text.Encoding]::UTF8)
+        }
+    ) -join "`n"
+    $bindingFunction = $Kind.ToLowerInvariant() + "Bindings"
+    $Engine.Execute(@"
+function $bindingFunction() {
+    var $root = Objectifier.objectify(xmlDoc, MAP.$map).$root;
+    $root._xml = xmlDoc.DocumentElement.OuterXml.replace(/(\r\n|\n|\r)/g, '\n').replace(/<!--[\s\S]*?-->/g, '');
+    var VARIABLES = {};
+    var enumerator = variablesHashtable.GetEnumerator();
+    while (enumerator.MoveNext()) VARIABLES[enumerator.Current.Key] = enumerator.Current.Value;
+$prelude
+}
+"@) | Out-Null
 }
 
 #-------------------------------------------------------------------
@@ -273,10 +255,6 @@ if (-not $PSBoundParameters.ContainsKey('FolderPath')) {
     exit
 }
 
-if ($Renderer -eq "Sisula" -and $Filters.ToUpper() -match '[ST]') {
-    throw "The Sisula renderer currently supports workflows only. Use -Filters W, or use the default Sisulator renderer."
-}
-
 # --- Print Header ---
 Write-Host "-------------------------------------------------------------------"
 Write-Host " sisula ETL Metadata Driven DW Automation Framework (v$VERSION)"
@@ -318,32 +296,19 @@ $jintEngine = New-Object Jint.Engine
 $jintEngine.SetValue("console", $consoleInstance) | Out-Null
 $jintEngine.SetValue("XmlNodeType", $xmlNodeTypeConstants) | Out-Null
 
-# Load the main Sisulator.js library into the engine once.
-$sisulatorJsPath = Join-Path -Path $PSScriptRoot -ChildPath "Sisulator4PS.js"
-if (-not (Test-Path $sisulatorJsPath)) {
-    throw "The required helper file 'Sisulator.js' was not found."
+# Load the XML objectifier and declarative renderer once.
+$objectifierPath = Join-Path $PSScriptRoot "Objectifier4PS.js"
+$jintEngine.Execute((Get-Content -Raw -Path $objectifierPath -Encoding UTF8 -ErrorAction Stop)) | Out-Null
+$rendererPath = Join-Path $PSScriptRoot "code\sisula.js"
+$jintEngine.Execute((Get-Content -Raw -Path $rendererPath -Encoding UTF8 -ErrorAction Stop)) | Out-Null
+if ($Filters.ToUpper() -match 'W') { Initialize-SisulaBindings -Engine $jintEngine -Kind "Workflow" }
+if ($Filters.ToUpper() -match 'S') {
+    Initialize-SisulaBindings -Engine $jintEngine -Kind "Format"
+    Initialize-SisulaBindings -Engine $jintEngine -Kind "Source"
 }
-$sisulatorJavaScript = Get-Content -Path $sisulatorJsPath -Raw -Encoding UTF8
-Write-Host "  * Executing: $sisulatorJsPath"
-$jintEngine.Execute($sisulatorJavaScript) | Out-Null
-if ($Renderer -eq "Sisula") {
-    $rendererPath = Join-Path $PSScriptRoot "code\sisula.js"
-    $jintEngine.Execute((Get-Content -Raw -Path $rendererPath -Encoding UTF8 -ErrorAction Stop)) | Out-Null
-    $prelude = @(
-        Get-Content -Raw -Path (Join-Path $PSScriptRoot "sisulets\Variables.js") -Encoding UTF8 -ErrorAction Stop
-        Get-Content -Raw -Path (Join-Path $PSScriptRoot "sisulets\workflow\Variables.js") -Encoding UTF8 -ErrorAction Stop
-        Get-Content -Raw -Path (Join-Path $PSScriptRoot "sisulets\workflow\Bindings.js") -Encoding UTF8 -ErrorAction Stop
-    ) -join "`n"
-    $jintEngine.Execute(@"
-function workflowBindings() {
-    var workflow = Sisulator.objectify(xmlDoc, MAP.Workflow).workflow;
-    workflow._xml = xmlDoc.DocumentElement.OuterXml.replace(/(\r\n|\n|\r)/g, '\n').replace(/<!--[\s\S]*?-->/g, '');
-    var VARIABLES = {};
-    var enumerator = variablesHashtable.GetEnumerator();
-    while (enumerator.MoveNext()) VARIABLES[enumerator.Current.Key] = enumerator.Current.Value;
-$prelude
-}
-"@) | Out-Null
+if ($Filters.ToUpper() -match 'T') {
+    Initialize-SisulaBindings -Engine $jintEngine -Kind "Target"
+    Initialize-SisulaBindings -Engine $jintEngine -Kind "Biml"
 }
 Write-Host "  * Jint engine is configured and ready." -ForegroundColor Green
 
@@ -365,7 +330,7 @@ $sisulaPath = $PSScriptRoot
 # Explicitly add the script's own path to the context variables (with a trailing slash)
 $slash = [System.IO.Path]::DirectorySeparatorChar
 $scriptContextVariables['SisulaPath'] = "$sisulaPath$slash"
-Write-Host "`n  * Path to Sisulator script: $sisulaPath"
+Write-Host "`n  * Path to Sisula script: $sisulaPath"
 Write-Host "  * Path to configuration folder: $FolderPath"
 Push-Location -Path $sisulaPath
 Write-Host "  * Entered script directory: $(Get-Location)"
@@ -384,9 +349,9 @@ try {
             foreach ($file in (Get-ChildItem -Path $sourcesDir -Filter "*.xml")) {
                 $outputFile = Join-Path -Path $formatsDir -ChildPath "$($file.BaseName).xml"
                 Write-Host "  * Transforming $($file.Name) -> $($outputFile.Replace($FolderPath, '...'))"
-                # --- REFACTORED --- Pass the single engine instance to the function
-                $result = Invoke-Sisulation -Engine $jintEngine -XmlFilePath $file.FullName -MappingType "Source" -DirectiveFilePath "format.directive" -ContextVariables $scriptContextVariables
-                Write-TextFileUtf8NoBom -FilePath $outputFile -Content $result            }
+                $result = Invoke-SisulaTransformation -Engine $jintEngine -XmlFilePath $file.FullName -ContextVariables $scriptContextVariables -Kind "Format"
+                Write-TextFileUtf8NoBom -FilePath $outputFile -Content $result
+            }
         }
     }
 
@@ -401,7 +366,7 @@ try {
                 $formatFile = Join-Path -Path $formatsDir -ChildPath "$($file.BaseName).xml"
                 $scriptContextVariables['FormatFile'] = "$formatFile"
                 Write-Host "  * Transforming $($file.Name) -> $($outputFile.Replace($FolderPath, '...'))"
-                $result = Invoke-Sisulation -Engine $jintEngine -XmlFilePath $file.FullName -MappingType "Source" -DirectiveFilePath "source.directive" -ContextVariables $scriptContextVariables
+                $result = Invoke-SisulaTransformation -Engine $jintEngine -XmlFilePath $file.FullName -ContextVariables $scriptContextVariables -Kind "Source"
                 Write-TextFileUtf8NoBom -FilePath $outputFile -Content $result
                 $sqlFiles.Add($outputFile)
             }
@@ -416,7 +381,7 @@ try {
             foreach ($file in (Get-ChildItem -Path $targetsDir -Filter "*.xml")) {
                 $outputFile = Join-Path -Path $targetsDir -ChildPath "$($file.BaseName).sql"
                 Write-Host "  * Transforming $($file.Name) -> $($outputFile.Replace($FolderPath, '...'))"
-                $result = Invoke-Sisulation -Engine $jintEngine -XmlFilePath $file.FullName -MappingType "Target" -DirectiveFilePath "target.directive" -ContextVariables $scriptContextVariables
+                $result = Invoke-SisulaTransformation -Engine $jintEngine -XmlFilePath $file.FullName -ContextVariables $scriptContextVariables -Kind "Target"
                 Write-TextFileUtf8NoBom -FilePath $outputFile -Content $result
                 $sqlFiles.Add($outputFile)
             }
@@ -432,7 +397,7 @@ try {
             foreach ($file in (Get-ChildItem -Path $targetsDir -Filter "*.xml")) {
                 $outputFile = Join-Path -Path $bimlDir -ChildPath "$($file.BaseName).biml"
                 Write-Host "  * Transforming $($file.Name) -> $($outputFile.Replace($FolderPath, '...'))"
-                $result = Invoke-Sisulation -Engine $jintEngine -XmlFilePath $file.FullName -MappingType "Target" -DirectiveFilePath "biml.directive" -ContextVariables $scriptContextVariables
+                $result = Invoke-SisulaTransformation -Engine $jintEngine -XmlFilePath $file.FullName -ContextVariables $scriptContextVariables -Kind "Biml"
                 Write-TextFileUtf8NoBom -FilePath $outputFile -Content $result
             }
         }
@@ -446,12 +411,7 @@ try {
             foreach ($file in (Get-ChildItem -Path $workflowsDir -Filter "*.xml")) {
                 $outputFile = Join-Path -Path $workflowsDir -ChildPath "$($file.BaseName).sql"
                 Write-Host "  * Transforming $($file.Name) -> $($outputFile.Replace($FolderPath, '...'))"
-                if ($Renderer -eq "Sisula") {
-                    $result = Invoke-WorkflowSisula -Engine $jintEngine -XmlFilePath $file.FullName -ContextVariables $scriptContextVariables
-                }
-                else {
-                    $result = Invoke-Sisulation -Engine $jintEngine -XmlFilePath $file.FullName -MappingType "Workflow" -DirectiveFilePath "workflow.directive" -ContextVariables $scriptContextVariables
-                }
+                $result = Invoke-SisulaTransformation -Engine $jintEngine -XmlFilePath $file.FullName -ContextVariables $scriptContextVariables -Kind "Workflow"
                 Write-TextFileUtf8NoBom -FilePath $outputFile -Content $result
                 $sqlFiles.Add($outputFile)
             }

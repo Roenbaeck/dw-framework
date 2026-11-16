@@ -1,0 +1,723 @@
+-- create schema if it does not exist
+IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'dbo')
+BEGIN
+    EXEC( 'CREATE SCHEMA dbo' );
+END
+GO
+-- creates utility functions needed in the staging
+IF Object_Id('dbo.Splitter', 'FT') IS NOT NULL
+DROP FUNCTION [dbo].[Splitter];
+GO
+IF Object_Id('dbo.MultiSplitter', 'FT') IS NOT NULL
+DROP FUNCTION [dbo].[MultiSplitter];
+GO
+IF Object_Id('dbo.ColumnSplitter', 'PC') IS NOT NULL
+DROP PROCEDURE [dbo].[ColumnSplitter];
+GO
+IF Object_Id('dbo.MultiColumnSplitter', 'PC') IS NOT NULL
+DROP PROCEDURE [dbo].[MultiColumnSplitter];
+GO
+IF Object_Id('dbo.IsType', 'FS') IS NOT NULL
+DROP FUNCTION [dbo].[IsType];
+GO
+IF Object_Id('dbo.ToLocalTime', 'FS') IS NOT NULL
+DROP FUNCTION [dbo].[ToLocalTime];
+GO
+IF Object_Id('dbo.ToUniversalTime', 'FS') IS NOT NULL
+DROP FUNCTION [dbo].[ToUniversalTime];
+GO
+-- BEGIN! LEGACY --
+IF EXISTS (
+	SELECT
+		*
+	FROM
+		sys.assemblies
+	WHERE
+		name = 'dboUtilities'
+)
+DROP ASSEMBLY dboUtilities;
+-- END! LEGACY --
+declare @version char(4) =
+	case
+		when patindex('% 2[0-2][0-9][0-9] %', @@VERSION) > 0
+		then substring(@@VERSION, patindex('% 2[0-2][0-9][0-9] %', @@VERSION) + 1, 4)
+		else '????'
+	end
+IF EXISTS (
+	SELECT
+		*
+	FROM
+		sys.assemblies
+	WHERE
+		name = 'Utilities'
+)
+BEGIN TRY
+	ALTER ASSEMBLY Utilities
+	FROM '<FRAMEWORK>\code\Utilities' + @version + '.dll'
+	WITH PERMISSION_SET = SAFE;
+	PRINT 'The .NET CLR for SQL Server ' + @version + ' was updated.';
+END TRY BEGIN CATCH
+	DECLARE @msg VARCHAR(2000) = ERROR_MESSAGE();
+	IF(PATINDEX('%identical%', @msg) > 0)
+	BEGIN
+		PRINT 'The .NET CLR for SQL Server ' + @version + ' has already been installed.';
+	END
+	ELSE
+	BEGIN TRY
+		DROP ASSEMBLY Utilities;
+	END TRY
+	BEGIN CATCH
+		PRINT ERROR_MESSAGE();
+	END CATCH
+END CATCH
+IF NOT EXISTS (
+	SELECT
+		*
+	FROM
+		sys.assemblies
+	WHERE
+		name = 'Utilities'
+)
+BEGIN TRY
+    -- since some version of 2017 assemblies must be explicitly whitelisted
+    IF(@version >= 2017 AND OBJECT_ID('sys.sp_add_trusted_assembly') IS NOT NULL)
+    BEGIN
+		CREATE TABLE #hash([hash] varbinary(64));
+		EXEC('INSERT INTO #hash SELECT CONVERT(varbinary(64), ''0x'' + H, 1) FROM OPENROWSET(BULK ''<FRAMEWORK>\code\Utilities' + @version + '.SHA512'', SINGLE_CLOB) T(H);');
+		DECLARE @hash varbinary(64);
+		SELECT @hash = [hash] FROM #hash;
+        IF NOT EXISTS(SELECT [hash] FROM sys.trusted_assemblies WHERE [hash] = @hash)
+            EXEC sys.sp_add_trusted_assembly @hash, N'Utilities';
+	END
+	CREATE ASSEMBLY Utilities
+	AUTHORIZATION dbo
+	FROM '<FRAMEWORK>\code\Utilities' + @version + '.dll'
+	WITH PERMISSION_SET = SAFE;
+	PRINT 'The .NET CLR for SQL Server ' + @version + ' was installed.'
+END TRY BEGIN CATCH
+	PRINT ERROR_MESSAGE();
+END CATCH
+GO
+CREATE FUNCTION [dbo].Splitter(@row AS nvarchar(max), @pattern AS nvarchar(4000))
+RETURNS TABLE (
+	[match] nvarchar(max),
+	[index] int
+) AS EXTERNAL NAME Utilities.Splitter.InitMethod;
+GO
+CREATE FUNCTION [dbo].MultiSplitter(@row AS nvarchar(max), @pattern AS nvarchar(4000))
+RETURNS TABLE (
+	[match] nvarchar(max),
+	[index] int,
+	[group] nvarchar(max)
+) AS EXTERNAL NAME Utilities.MultiSplitter.InitMethod;
+GO
+CREATE FUNCTION [dbo].IsType(@dataValue AS nvarchar(max), @dataType AS nvarchar(4000))
+RETURNS bit
+AS EXTERNAL NAME Utilities.IsType.InitMethod;
+GO
+CREATE FUNCTION [dbo].ToLocalTime(@sqlDatetime AS datetime)
+RETURNS datetime
+AS EXTERNAL NAME Utilities.ToLocalTime.InitMethod;
+GO
+CREATE FUNCTION [dbo].ToUniversalTime(@sqlDatetime AS datetime)
+RETURNS datetime
+AS EXTERNAL NAME Utilities.ToUniversalTime.InitMethod;
+GO
+CREATE PROCEDURE [dbo].ColumnSplitter(
+	@table AS nvarchar(4000),
+	@column AS nvarchar(4000),
+	@pattern AS nvarchar(4000),
+	@includeColumns AS nvarchar(4000) = null
+)
+AS EXTERNAL NAME Utilities.ColumnSplitter.InitMethod;
+GO
+CREATE PROCEDURE [dbo].MultiColumnSplitter(
+	@table AS nvarchar(4000),
+	@column AS nvarchar(4000),
+	@pattern AS nvarchar(4000),
+	@includeColumns AS nvarchar(4000) = null
+)
+AS EXTERNAL NAME Utilities.MultiColumnSplitter.InitMethod;
+GO
+IF NOT EXISTS (
+    SELECT value
+    FROM sys.configurations
+    WHERE name = 'clr enabled'
+      AND value = 1
+)
+BEGIN
+    EXEC sp_configure 'clr enabled', 1;
+    reconfigure with override;
+END
+GO
+-- Dropping raw table to enforce Deferred Name Resolution: Edge_Regex_Raw
+IF Object_ID('dbo.Edge_Regex_Raw', 'U') IS NOT NULL
+DROP TABLE [dbo].[Edge_Regex_Raw];
+IF Object_ID('dbo.Edge_Regex_CreateRawTable', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[Edge_Regex_CreateRawTable];
+GO
+--------------------------------------------------------------------------
+-- Procedure: Edge_Regex_CreateRawTable
+--
+-- This table holds the 'raw' loaded data.
+--
+-- row
+-- Holds a row loaded from a file.
+--
+-- _id
+-- This sequence is generated in order to keep a lineage through the
+-- staging process. If a single file has been loaded, this corresponds
+-- to the row number in the file.
+--
+-- metadata_CO_ID
+-- A number containing the file id, which either points to metadata
+-- if its used or is otherwise an incremented number per file.
+--
+-- _timestamp
+-- The time the row was created.
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[Edge_Regex_CreateRawTable] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+    IF Object_ID('dbo.Edge_Regex_Raw', 'U') IS NOT NULL
+    DROP TABLE [dbo].[Edge_Regex_Raw];
+    CREATE TABLE [dbo].[Edge_Regex_Raw] (
+        _id int identity(1,1) not null,
+        _file AS metadata_CO_ID, -- keep an alias for backwards compatibility
+        metadata_CO_ID int not null default 0,
+        metadata_JB_ID int not null default 0,
+        _timestamp datetime not null default SYSUTCDATETIME(),
+        [row] varchar(60),
+        constraint [pkdbo_Edge_Regex_Raw] primary key(
+            _id asc
+        )
+    );
+END
+GO
+-- Dropping insert view to enforce Deferred Name Resolution: Edge_Regex_Insert
+IF Object_ID('dbo.Edge_Regex_Insert', 'V') IS NOT NULL
+DROP VIEW [dbo].[Edge_Regex_Insert];
+IF Object_ID('dbo.Edge_Regex_CreateInsertView', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[Edge_Regex_CreateInsertView];
+GO
+--------------------------------------------------------------------------
+-- Procedure: Edge_Regex_CreateInsertView
+--
+-- This view is created as exposing the single column that will be
+-- the target of the BULK INSERT operation, since it cannot insert
+-- into a table with multiple columns without a format file.
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[Edge_Regex_CreateInsertView] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+    IF Object_ID('dbo.Edge_Regex_Insert', 'V') IS NOT NULL
+    DROP VIEW [dbo].[Edge_Regex_Insert];
+    EXEC('
+    CREATE VIEW [dbo].[Edge_Regex_Insert]
+    AS
+    SELECT
+        [row]
+    FROM
+        [dbo].[Edge_Regex_Raw];
+    ');
+END
+GO
+IF Object_ID('dbo.Edge_Regex_BulkInsert', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[Edge_Regex_BulkInsert];
+GO
+--------------------------------------------------------------------------
+-- Procedure: Edge_Regex_BulkInsert
+--
+-- This procedure performs a BULK INSERT of the given filename into
+-- the Edge_Regex_Insert view. The file is loaded row by row
+-- into a single column holding the entire row. This ensures that no
+-- data is lost when loading.
+--
+-- This job may called multiple times in a workflow when more than
+-- one file matching a given filename pattern is found.
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[Edge_Regex_BulkInsert] (
+	@filename varchar(2000),
+    @lastModified datetime,
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+DECLARE @CO_ID int;
+DECLARE @JB_ID int;
+DECLARE @inserts int;
+DECLARE @updates int;
+    IF Object_ID('dbo.Edge_Regex_Insert', 'V') IS NOT NULL
+    BEGIN
+    EXEC('
+        BULK INSERT [dbo].[Edge_Regex_Insert]
+        FROM ''' + @filename + '''
+        WITH (
+            DATAFILETYPE = ''char'',
+            FIELDTERMINATOR = ''|'',
+            FIRSTROW = 0,
+            TABLOCK
+        );
+    ');
+    SET @inserts = @@ROWCOUNT;
+    SET @CO_ID = 1 + (
+        SELECT TOP 1
+            metadata_CO_ID
+        FROM
+            [dbo].[Edge_Regex_Raw]
+        ORDER BY
+            metadata_CO_ID
+        DESC
+    );
+    SET @JB_ID = CHECKSUM(@agentJobId);
+    UPDATE [dbo].[Edge_Regex_Raw]
+    SET
+    metadata_CO_ID =
+      case when metadata_CO_ID = 0 then @CO_ID else metadata_CO_ID end,
+    metadata_JB_ID =
+      case when metadata_JB_ID = 0 then @JB_ID else metadata_JB_ID end;
+    SET @updates = @@ROWCOUNT;
+    END
+END
+GO
+-- Dropping split view to enforce Deferred Name Resolution: Edge_Regex_Rows_Split
+IF Object_ID('dbo.Edge_Regex_Rows_Split', 'V') IS NOT NULL
+DROP VIEW [dbo].[Edge_Regex_Rows_Split];
+-- Dropping split view to enforce Deferred Name Resolution: Edge_Regex_More_Split
+IF Object_ID('dbo.Edge_Regex_More_Split', 'V') IS NOT NULL
+DROP VIEW [dbo].[Edge_Regex_More_Split];
+IF Object_ID('dbo.Edge_Regex_CreateSplitViews', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[Edge_Regex_CreateSplitViews];
+GO
+--------------------------------------------------------------------------
+-- Procedure: Edge_Regex_CreateSplitViews
+--
+-- The split view uses a CLR called the Splitter to split rows in the
+-- 'raw' table into columns. The Splitter uses a regular expression in
+-- which groups indicate which parts should be cut out as columns.
+--
+-- The view also checks data types and provide the results as well as
+-- show the 'raw' cut column value, before any given transformations
+-- have taken place.
+--
+-- If keys are defined, these keys are checked for duplicates and the
+-- duplicate number can be found through the view.
+--
+-- Create: Edge_Regex_Rows_Split
+-- Create: Edge_Regex_More_Split
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[Edge_Regex_CreateSplitViews] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+    IF Object_ID('dbo.Edge_Regex_Rows_Split', 'V') IS NOT NULL
+    DROP VIEW [dbo].[Edge_Regex_Rows_Split];
+    EXEC('
+    CREATE VIEW [dbo].[Edge_Regex_Rows_Split]
+    AS
+    SELECT
+        t._id,
+        t.metadata_CO_ID,
+        t.metadata_JB_ID,
+        t._timestamp,
+        m.[Fixed] as [Fixed_Match],
+        t.[Fixed],
+        CASE
+            WHEN t.[Fixed] is null THEN ''Null value not allowed''
+            WHEN t.[Fixed] is not null AND [dbo].IsType(t.[Fixed], ''varchar(3)'') = 0 THEN ''Conversion to varchar(3) failed''
+        END AS [Fixed_Error],
+        m.[Delimited] as [Delimited_Match],
+        t.[Delimited],
+        CASE
+            WHEN t.[Delimited] is null THEN ''Null value not allowed''
+            WHEN t.[Delimited] is not null AND [dbo].IsType(t.[Delimited], ''varchar(20)'') = 0 THEN ''Conversion to varchar(20) failed''
+        END AS [Delimited_Error],
+        m.[Pattern] as [Pattern_Match],
+        t.[Pattern],
+        CASE
+            WHEN t.[Pattern] is null THEN ''Null value not allowed''
+            WHEN t.[Pattern] is not null AND [dbo].IsType(t.[Pattern], ''varchar(20)'') = 0 THEN ''Conversion to varchar(20) failed''
+        END AS [Pattern_Error],
+        m.[Rest] as [Rest_Match],
+        t.[Rest],
+        CASE
+            WHEN t.[Rest] is not null AND [dbo].IsType(t.[Rest], ''varchar(20)'') = 0 THEN ''Conversion to varchar(20) failed''
+        END AS [Rest_Error],
+        ROW_NUMBER() OVER (
+            PARTITION BY
+                t.[Fixed],
+                t.[Delimited]
+            ORDER BY
+                t._id
+        ) - 1 as Primary_Duplicate,
+        ROW_NUMBER() OVER (
+            PARTITION BY
+                t.[Pattern]
+            ORDER BY
+                t._id
+        ) - 1 as Unique_Duplicate
+    FROM (
+        SELECT TOP(2147483647)
+            *
+        FROM (
+        SELECT ''O''''Brien'' AS [row]
+        ) src
+        ORDER BY
+            _id ASC
+    ) forcedMaterializationTrick
+    CROSS APPLY (
+		SELECT
+			NULLIF([1], ''x''y'') AS [Fixed],
+			NULLIF([2], ''n''o'') AS [Delimited],
+			NULLIF([3], ''n''o'') AS [Pattern],
+			NULLIF([4], ''n''o'') AS [Rest]
+		FROM (
+            SELECT
+                [match],
+                ROW_NUMBER() OVER (ORDER BY (SELECT 1)) AS idx
+            FROM
+                [dbo].Splitter(ISNULL(forcedMaterializationTrick.[row], ''''), N''.{2}(.{3})(.*?)''([a-z'']*)(.*)'')
+        ) s
+        PIVOT (
+            MAX([match]) FOR idx IN ([1], [2], [3], [4])
+        ) p
+    ) m
+    CROSS APPLY (
+        SELECT
+            _id,
+            metadata_CO_ID,
+            metadata_JB_ID,
+            _timestamp,
+            [Fixed] AS [Fixed],
+            LTRIM(''a''''b'') AS [Delimited],
+            [Pattern] AS [Pattern],
+            [Rest] AS [Rest]
+    ) t;
+    ');
+    IF Object_ID('dbo.Edge_Regex_More_Split', 'V') IS NOT NULL
+    DROP VIEW [dbo].[Edge_Regex_More_Split];
+    EXEC('
+    CREATE VIEW [dbo].[Edge_Regex_More_Split]
+    AS
+    SELECT
+        t._id,
+        t.metadata_CO_ID,
+        t.metadata_JB_ID,
+        t._timestamp,
+        m.[Last] as [Last_Match],
+        t.[Last],
+        CASE
+            WHEN t.[Last] is not null AND [dbo].IsType(t.[Last], ''int'') = 0 THEN ''Conversion to int failed''
+        END AS [Last_Error]
+    FROM (
+        SELECT TOP(2147483647)
+            *
+        FROM 
+            [dbo].[Edge_Regex_Raw] src
+        ORDER BY
+            _id ASC
+    ) forcedMaterializationTrick
+    CROSS APPLY (
+		SELECT
+			NULLIF([1], '''') AS [Last]
+		FROM (
+            SELECT
+                [match],
+                ROW_NUMBER() OVER (ORDER BY (SELECT 1)) AS idx
+            FROM
+                [dbo].Splitter(ISNULL(forcedMaterializationTrick.[row], ''''), N''^x(.*?);'')
+        ) s
+        PIVOT (
+            MAX([match]) FOR idx IN ([1])
+        ) p
+    ) m
+    CROSS APPLY (
+        SELECT
+            _id,
+            metadata_CO_ID,
+            metadata_JB_ID,
+            _timestamp,
+            [Last] AS [Last]
+    ) t;
+    ');
+END
+GO
+-- Dropping error view to enforce Deferred Name Resolution: Edge_Regex_Rows_Error
+IF Object_ID('dbo.Edge_Regex_Rows_Error', 'V') IS NOT NULL
+DROP VIEW [dbo].[Edge_Regex_Rows_Error];
+-- Dropping error view to enforce Deferred Name Resolution: Edge_Regex_More_Error
+IF Object_ID('dbo.Edge_Regex_More_Error', 'V') IS NOT NULL
+DROP VIEW [dbo].[Edge_Regex_More_Error];
+IF Object_ID('dbo.Edge_Regex_CreateErrorViews', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[Edge_Regex_CreateErrorViews];
+GO
+--------------------------------------------------------------------------
+-- Procedure: Edge_Regex_CreateErrorViews
+--
+-- The created error views can be used to find rows that have errors of
+-- the following kinds:
+--
+-- Type casting errors
+-- These errors occur when a value cannot be cast to its designated
+-- datatype, for example when trying to cast 'A' to an int.
+--
+-- Key duplicate errors
+-- These errors occur when a primary key is defined and duplicates of
+-- that key is found in the tables.
+--
+-- Create: Edge_Regex_Rows_Error
+-- Create: Edge_Regex_More_Error
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[Edge_Regex_CreateErrorViews] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+    IF Object_ID('dbo.Edge_Regex_Rows_Error', 'V') IS NOT NULL
+    DROP VIEW [dbo].[Edge_Regex_Rows_Error];
+    EXEC('
+    CREATE VIEW [dbo].[Edge_Regex_Rows_Error] 
+    AS
+    SELECT
+        *
+    FROM
+        [dbo].[Edge_Regex_Rows_Split]
+    WHERE
+        Primary_Duplicate > 0
+    OR
+        Unique_Duplicate > 0
+    OR
+        [Fixed_Error] is not null
+    OR
+        [Delimited_Error] is not null
+    OR
+        [Pattern_Error] is not null
+    OR
+        [Rest_Error] is not null;
+    ');
+    IF Object_ID('dbo.Edge_Regex_More_Error', 'V') IS NOT NULL
+    DROP VIEW [dbo].[Edge_Regex_More_Error];
+    EXEC('
+    CREATE VIEW [dbo].[Edge_Regex_More_Error] 
+    AS
+    SELECT
+        *
+    FROM
+        [dbo].[Edge_Regex_More_Split]
+    WHERE
+        [Last_Error] is not null;
+    ');
+END
+GO
+-- Dropping table to enforce Deferred Name Resolution: Edge_Regex_Rows_Typed
+IF Object_ID('dbo.Edge_Regex_Rows_Typed', 'U') IS NOT NULL
+DROP TABLE [dbo].[Edge_Regex_Rows_Typed];
+-- Dropping table to enforce Deferred Name Resolution: Edge_Regex_More_Typed
+IF Object_ID('dbo.Edge_Regex_More_Typed', 'U') IS NOT NULL
+DROP TABLE [dbo].[Edge_Regex_More_Typed];
+IF Object_ID('dbo.Edge_Regex_CreateTypedTables', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[Edge_Regex_CreateTypedTables];
+GO
+--------------------------------------------------------------------------
+-- Procedure: Edge_Regex_CreateTypedTables
+--
+-- The typed tables hold the data that make it through the process
+-- without errors. Columns here have the data types defined in the
+-- source XML definition.
+--
+-- Metadata columns, such as _id, can be used to backtrack from
+-- a value to the actual row from where it came.
+--
+-- Create: Edge_Regex_Rows_Typed
+-- Create: Edge_Regex_More_Typed
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[Edge_Regex_CreateTypedTables] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+    IF Object_ID('dbo.Edge_Regex_Rows_Typed', 'U') IS NOT NULL
+    DROP TABLE [dbo].[Edge_Regex_Rows_Typed];
+    CREATE TABLE [dbo].[Edge_Regex_Rows_Typed] (
+        _id int not null,
+        _file AS metadata_CO_ID, -- keep an alias for backwards compatibility
+        metadata_CO_ID int not null,
+        metadata_JB_ID int not null,
+        _timestamp datetime not null default SYSUTCDATETIME(),
+        _Primary as cast(HashBytes('MD5', CONVERT(varchar(max), [Fixed], 126) + CHAR(183) + CONVERT(varchar(max), [Delimited], 126)) as varbinary(16)),
+        _Unique as cast(HashBytes('MD5', CONVERT(varchar(max), [Pattern], 126)) as varbinary(16)),
+        [Fixed] varchar(3) not null,
+        [Delimited] varchar(20) not null,
+        [Pattern] varchar(20) not null,
+        [Rest] varchar(20) null,
+        [Computed] as CAST(UPPER('a''b') AS varchar(20)) ,
+        [Empty] int null
+    );
+    IF Object_ID('dbo.Edge_Regex_More_Typed', 'U') IS NOT NULL
+    DROP TABLE [dbo].[Edge_Regex_More_Typed];
+    CREATE TABLE [dbo].[Edge_Regex_More_Typed] (
+        _id int not null,
+        _file AS metadata_CO_ID, -- keep an alias for backwards compatibility
+        metadata_CO_ID int not null,
+        metadata_JB_ID int not null,
+        _timestamp datetime not null default SYSUTCDATETIME(),
+        [Last] int null
+    );
+END
+GO
+IF Object_ID('dbo.Edge_Regex_SplitRawIntoTyped', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[Edge_Regex_SplitRawIntoTyped];
+GO
+--------------------------------------------------------------------------
+-- Procedure: Edge_Regex_SplitRawIntoTyped
+--
+-- This procedure loads data from the 'Split' views into the 'Typed'
+-- tables, with the condition that data must conform to the given
+-- data types and have no duplicates for defined keys.
+--
+-- Load: Edge_Regex_Rows_Split into Edge_Regex_Rows_Typed
+-- Load: Edge_Regex_More_Split into Edge_Regex_More_Typed
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[Edge_Regex_SplitRawIntoTyped] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+DECLARE @JB_ID int;
+DECLARE @insert int;
+DECLARE @updates int;
+    IF Object_ID('dbo.Edge_Regex_Rows_Typed', 'U') IS NOT NULL
+    BEGIN
+    INSERT INTO [dbo].[Edge_Regex_Rows_Typed] (
+        _id,
+        metadata_CO_ID,
+        metadata_JB_ID,
+        [Fixed],
+        [Delimited],
+        [Pattern],
+        [Rest]
+    )
+    SELECT
+        _id,
+        metadata_CO_ID,
+        metadata_JB_ID,
+        [Fixed],
+        [Delimited],
+        [Pattern],
+        [Rest]
+    FROM
+        [dbo].[Edge_Regex_Rows_Split]
+    WHERE
+        Primary_Duplicate = 0
+    AND
+        Unique_Duplicate = 0
+    AND
+        [Fixed_Error] is null
+    AND
+        [Delimited_Error] is null
+    AND
+        [Pattern_Error] is null
+    AND
+        [Rest_Error] is null;
+    SET @insert = @insert + @@ROWCOUNT;
+    END
+    IF Object_ID('dbo.Edge_Regex_More_Typed', 'U') IS NOT NULL
+    BEGIN
+    INSERT INTO [dbo].[Edge_Regex_More_Typed] (
+        _id,
+        metadata_CO_ID,
+        metadata_JB_ID,
+        [Last]
+    )
+    SELECT
+        _id,
+        metadata_CO_ID,
+        metadata_JB_ID,
+        [Last]
+    FROM
+        [dbo].[Edge_Regex_More_Split]
+    WHERE
+        [Last_Error] is null;
+    SET @insert = @insert + @@ROWCOUNT;
+    END
+END
+GO
+IF Object_ID('dbo.Edge_Regex_AddKeysToTyped', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[Edge_Regex_AddKeysToTyped];
+GO
+--------------------------------------------------------------------------
+-- Procedure: Edge_Regex_AddKeysToTyped
+--
+-- This procedure adds keys defined in the source xml definition to the
+-- typed staging tables. Keys boost performance when loading is made
+-- using MERGE statements on the target with a search condition that
+-- matches the key composition. Primary keys also guarantee uniquness
+-- among its values.
+--
+-- Table: Edge_Regex_Rows_Typed
+-- Key: Fixed (as primary key)
+-- Key: Delimited (as primary key)
+-- Key: Pattern (as unique)
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[Edge_Regex_AddKeysToTyped] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF Object_ID('dbo.Edge_Regex_Rows_Typed', 'U') IS NOT NULL
+    ALTER TABLE [dbo].[Edge_Regex_Rows_Typed]
+    ADD
+        CONSTRAINT [dbo_Primary_Edge_Regex_Rows_Typed] primary key (
+            [Fixed],
+            [Delimited]
+        ),
+        CONSTRAINT [dbo_Unique_Edge_Regex_Rows_Typed] unique (
+            [Pattern]
+        );
+END
+GO

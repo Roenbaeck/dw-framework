@@ -1,0 +1,441 @@
+IF Object_ID('dbo.InsertTable__StageInsert', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[InsertTable__StageInsert];
+GO
+--------------------------------------------------------------------------
+-- Procedure: InsertTable__StageInsert
+-- Source: StageInsert
+-- Target: InsertTable (insert)
+--
+-- Map: s1 to Natural (as natural key)
+-- Map: s2 to Surrogate (as surrogate key)
+-- Map: s3 to Metadata (as metadata)
+-- Map: s4 to Value
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[InsertTable__StageInsert] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+DECLARE @inserts int;
+DECLARE @updates int;
+DECLARE @deletes int;
+DECLARE @actions TABLE (
+    [action] char(1) not null
+);
+DECLARE @workId int;
+DECLARE @operationsId int;
+DECLARE @theErrorLine int;
+DECLARE @theErrorMessage varchar(555);
+DECLARE @theErrorSeverity int;
+DECLARE @theErrorState int;
+EXEC TestMetadata.metadata._WorkStarting
+    @configurationName = 'Edge',
+    @configurationType = 'Target',
+    @WO_ID = @workId OUTPUT,
+    @name = 'InsertTable__StageInsert',
+    @agentStepId = @agentStepId,
+    @agentJobId = @agentJobId
+BEGIN TRY
+EXEC TestMetadata.metadata._WorkSourceToTarget
+    @OP_ID = @operationsId OUTPUT,
+    @WO_ID = @workId,
+    @sourceName = 'StageInsert',
+    @targetName = 'InsertTable',
+    @sourceType = 'Table',
+    @targetType = 'Table',
+    @sourceCreated = DEFAULT,
+    @targetCreated = DEFAULT;
+    -- Perform the actual insert ----------------------
+    INSERT INTO [DW].[dbo].[InsertTable] (
+        [Natural],
+        [Surrogate],
+        [Metadata],
+        [Value]
+    )
+    SELECT
+        [source].[s1],
+        [source].[s2],
+        [source].[s3],
+        [source].[s4]
+    FROM
+        StageInsert AS [source];
+    SET @inserts = NULLIF(@@ROWCOUNT + COALESCE(@inserts, 0), 0);
+    EXEC TestMetadata.metadata._WorkSetInserts @workId, @operationsId, @inserts;
+    EXEC TestMetadata.metadata._WorkSetUpdates @workId, @operationsId, @updates;
+    EXEC TestMetadata.metadata._WorkSetDeletes @workId, @operationsId, @deletes;
+    EXEC TestMetadata.metadata._WorkStopping @workId, 'Success';
+END TRY
+BEGIN CATCH
+	SELECT
+		@theErrorLine = ERROR_LINE(),
+		@theErrorMessage = ERROR_MESSAGE(),
+        @theErrorSeverity = ERROR_SEVERITY(),
+        @theErrorState = ERROR_STATE();
+    EXEC TestMetadata.metadata._WorkStopping
+        @WO_ID = @workId,
+        @status = 'Failure',
+        @errorLine = @theErrorLine,
+        @errorMessage = @theErrorMessage;
+    -- Propagate the error
+    RAISERROR(
+        @theErrorMessage,
+        @theErrorSeverity,
+        @theErrorState
+    );
+END CATCH
+END
+GO
+IF Object_ID('dbo.InsertQuery__StageQuery', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[InsertQuery__StageQuery];
+GO
+--------------------------------------------------------------------------
+-- Procedure: InsertQuery__StageQuery
+-- Source: StageQuery
+-- Target: InsertQuery (insert)
+--
+-- Map: s1 to Value
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[InsertQuery__StageQuery] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+DECLARE @inserts int;
+DECLARE @updates int;
+DECLARE @deletes int;
+DECLARE @actions TABLE (
+    [action] char(1) not null
+);
+DECLARE @workId int;
+DECLARE @operationsId int;
+DECLARE @theErrorLine int;
+DECLARE @theErrorMessage varchar(555);
+DECLARE @theErrorSeverity int;
+DECLARE @theErrorState int;
+EXEC TestMetadata.metadata._WorkStarting
+    @configurationName = 'Edge',
+    @configurationType = 'Target',
+    @WO_ID = @workId OUTPUT,
+    @name = 'InsertQuery__StageQuery',
+    @agentStepId = @agentStepId,
+    @agentJobId = @agentJobId
+BEGIN TRY
+EXEC TestMetadata.metadata._WorkSourceToTarget
+    @OP_ID = @operationsId OUTPUT,
+    @WO_ID = @workId,
+    @sourceName = 'StageQuery',
+    @targetName = 'InsertQuery',
+    @sourceType = 'Table',
+    @targetType = 'Table',
+    @sourceCreated = DEFAULT,
+    @targetCreated = DEFAULT;
+    -- Perform the actual insert ----------------------
+    INSERT INTO [DW].[dbo].[InsertQuery] (
+        [Value]
+    )
+    SELECT
+        [source].[s1]
+    FROM (
+        select 'O''Brien' as s1
+    ) AS [source];
+    SET @inserts = NULLIF(@@ROWCOUNT + COALESCE(@inserts, 0), 0);
+    EXEC TestMetadata.metadata._WorkSetInserts @workId, @operationsId, @inserts;
+    EXEC TestMetadata.metadata._WorkSetUpdates @workId, @operationsId, @updates;
+    EXEC TestMetadata.metadata._WorkSetDeletes @workId, @operationsId, @deletes;
+    EXEC TestMetadata.metadata._WorkStopping @workId, 'Success';
+END TRY
+BEGIN CATCH
+	SELECT
+		@theErrorLine = ERROR_LINE(),
+		@theErrorMessage = ERROR_MESSAGE(),
+        @theErrorSeverity = ERROR_SEVERITY(),
+        @theErrorState = ERROR_STATE();
+    EXEC TestMetadata.metadata._WorkStopping
+        @WO_ID = @workId,
+        @status = 'Failure',
+        @errorLine = @theErrorLine,
+        @errorMessage = @theErrorMessage;
+    -- Propagate the error
+    RAISERROR(
+        @theErrorMessage,
+        @theErrorSeverity,
+        @theErrorState
+    );
+END CATCH
+END
+GO
+IF Object_ID('dbo.MergeTable__StageMerge', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[MergeTable__StageMerge];
+GO
+--------------------------------------------------------------------------
+-- Procedure: MergeTable__StageMerge
+-- Source: StageMerge
+-- Target: MergeTable (merge)
+--
+-- Map: s1 to Key (as natural key)
+-- Map: s2 to StaticField [D] (as static)
+-- Map: s3 to ValueField [D]
+-- Map: s4 to HistoryField (as history)
+-- Map: s5 to OpinionField (as opinion)
+-- Map: s6 to Metadata (as metadata)
+--
+-- [D] marks deletable attributes
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[MergeTable__StageMerge] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+DECLARE @inserts int;
+DECLARE @updates int;
+DECLARE @deletes int;
+DECLARE @actions TABLE (
+    [action] char(1) not null
+);
+DECLARE @workId int;
+DECLARE @operationsId int;
+DECLARE @theErrorLine int;
+DECLARE @theErrorMessage varchar(555);
+DECLARE @theErrorSeverity int;
+DECLARE @theErrorState int;
+EXEC TestMetadata.metadata._WorkStarting
+    @configurationName = 'Edge',
+    @configurationType = 'Target',
+    @WO_ID = @workId OUTPUT,
+    @name = 'MergeTable__StageMerge',
+    @agentStepId = @agentStepId,
+    @agentJobId = @agentJobId
+BEGIN TRY
+EXEC TestMetadata.metadata._WorkSourceToTarget
+    @OP_ID = @operationsId OUTPUT,
+    @WO_ID = @workId,
+    @sourceName = 'StageMerge',
+    @targetName = 'MergeTable',
+    @sourceType = 'Table',
+    @targetType = 'Table',
+    @sourceCreated = DEFAULT,
+    @targetCreated = DEFAULT;
+    -- Preparations before the merge -----------------
+    select 'before';
+    -- Perform the actual merge ----------------------
+    MERGE INTO [DW].[dbo].[MergeTable] AS [target]
+    USING (
+        select s1, s2 from StageMerge
+    ) AS [source]
+    ON (
+        [source].[s1] = [target].[Key]
+    AND (
+        [source].[s1] > 0
+        )
+    )
+    WHEN NOT MATCHED THEN INSERT (
+        [Key],
+        [StaticField],
+        [ValueField],
+        [HistoryField],
+        [Metadata]
+    )
+    VALUES (
+        [source].[s1],
+        [source].[s2],
+        [source].[s3],
+        [source].[s4],
+        [source].[s6]
+    )
+    WHEN MATCHED AND (
+        ([target].[StaticField] is not null AND [source].[s2] is null)
+    OR
+        ([target].[StaticField] is null)
+    OR
+        ([target].[ValueField] is not null AND [source].[s3] is null)
+    OR
+        ([target].[ValueField] is null OR [source].[s3] <> [target].[ValueField])
+    )
+    THEN UPDATE
+    SET
+        [target].[Deletable_Static] = 1,
+        [target].[StaticField] =
+            CASE
+                WHEN ([target].[StaticField] is null)
+                THEN [source].[s2]
+                ELSE [target].[StaticField]
+            END,
+        [target].[Deletable_ValueF] = 1,
+        [target].[ValueField] = [source].[s3],
+        [target].[HistoryField] = [source].[s4],
+        [target].[Metadata] = [source].[s6]
+    OUTPUT
+        LEFT($action, 1) INTO @actions;
+    -- workaround for "Protocol error in TDS stream" bug
+    SELECT
+        @inserts = NULLIF(SUM(CASE WHEN [action] = 'I' THEN 1 ELSE 0 END), 0),
+        @updates = NULLIF(SUM(CASE WHEN [action] = 'U' THEN 1 ELSE 0 END), 0),
+        @deletes = NULLIF(SUM(CASE WHEN [action] = 'D' THEN 1 ELSE 0 END), 0)
+    FROM
+        @actions;
+    EXEC TestMetadata.metadata._WorkSetInserts @workId, @operationsId, @inserts;
+    EXEC TestMetadata.metadata._WorkSetUpdates @workId, @operationsId, @updates;
+    EXEC TestMetadata.metadata._WorkSetDeletes @workId, @operationsId, @deletes;
+    -- Post processing after the merge ---------------
+    select 'after';
+    EXEC TestMetadata.metadata._WorkStopping @workId, 'Success';
+END TRY
+BEGIN CATCH
+	SELECT
+		@theErrorLine = ERROR_LINE(),
+		@theErrorMessage = ERROR_MESSAGE(),
+        @theErrorSeverity = ERROR_SEVERITY(),
+        @theErrorState = ERROR_STATE();
+    EXEC TestMetadata.metadata._WorkStopping
+        @WO_ID = @workId,
+        @status = 'Failure',
+        @errorLine = @theErrorLine,
+        @errorMessage = @theErrorMessage;
+    -- Propagate the error
+    RAISERROR(
+        @theErrorMessage,
+        @theErrorSeverity,
+        @theErrorState
+    );
+END CATCH
+END
+GO
+IF Object_ID('dbo.KeysOnly__StageKeys', 'P') IS NOT NULL
+DROP PROCEDURE [dbo].[KeysOnly__StageKeys];
+GO
+--------------------------------------------------------------------------
+-- Procedure: KeysOnly__StageKeys
+-- Source: StageKeys
+-- Target: KeysOnly (merge)
+--
+-- Map: s1 to Key (as surrogate key)
+--
+-- Generated: <timestamp> by test-user
+-- From: test-computer in the test-domain domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [dbo].[KeysOnly__StageKeys] (
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+DECLARE @inserts int;
+DECLARE @updates int;
+DECLARE @deletes int;
+DECLARE @actions TABLE (
+    [action] char(1) not null
+);
+DECLARE @workId int;
+DECLARE @operationsId int;
+DECLARE @theErrorLine int;
+DECLARE @theErrorMessage varchar(555);
+DECLARE @theErrorSeverity int;
+DECLARE @theErrorState int;
+EXEC TestMetadata.metadata._WorkStarting
+    @configurationName = 'Edge',
+    @configurationType = 'Target',
+    @WO_ID = @workId OUTPUT,
+    @name = 'KeysOnly__StageKeys',
+    @agentStepId = @agentStepId,
+    @agentJobId = @agentJobId
+BEGIN TRY
+EXEC TestMetadata.metadata._WorkSourceToTarget
+    @OP_ID = @operationsId OUTPUT,
+    @WO_ID = @workId,
+    @sourceName = 'StageKeys',
+    @targetName = 'KeysOnly',
+    @sourceType = 'Table',
+    @targetType = 'Table',
+    @sourceCreated = DEFAULT,
+    @targetCreated = DEFAULT;
+    -- Perform the actual merge ----------------------
+    MERGE INTO [DW].[dbo].[KeysOnly] AS [target]
+    USING
+        StageKeys AS [source]
+    ON (
+        [source].[s1] = [target].[Key]
+    )
+    OUTPUT
+        LEFT($action, 1) INTO @actions;
+    -- workaround for "Protocol error in TDS stream" bug
+    SELECT
+        @inserts = NULLIF(SUM(CASE WHEN [action] = 'I' THEN 1 ELSE 0 END), 0),
+        @updates = NULLIF(SUM(CASE WHEN [action] = 'U' THEN 1 ELSE 0 END), 0),
+        @deletes = NULLIF(SUM(CASE WHEN [action] = 'D' THEN 1 ELSE 0 END), 0)
+    FROM
+        @actions;
+    EXEC TestMetadata.metadata._WorkSetInserts @workId, @operationsId, @inserts;
+    EXEC TestMetadata.metadata._WorkSetUpdates @workId, @operationsId, @updates;
+    EXEC TestMetadata.metadata._WorkSetDeletes @workId, @operationsId, @deletes;
+    EXEC TestMetadata.metadata._WorkStopping @workId, 'Success';
+END TRY
+BEGIN CATCH
+	SELECT
+		@theErrorLine = ERROR_LINE(),
+		@theErrorMessage = ERROR_MESSAGE(),
+        @theErrorSeverity = ERROR_SEVERITY(),
+        @theErrorState = ERROR_STATE();
+    EXEC TestMetadata.metadata._WorkStopping
+        @WO_ID = @workId,
+        @status = 'Failure',
+        @errorLine = @theErrorLine,
+        @errorMessage = @theErrorMessage;
+    -- Propagate the error
+    RAISERROR(
+        @theErrorMessage,
+        @theErrorSeverity,
+        @theErrorState
+    );
+END CATCH
+END
+GO
+-- The target definition used when generating the above
+DECLARE @xml XML = N'<target name="Edge" database="DW" temporalization="uni"><load source="StageInsert" target="InsertTable" type="insert"><map source="s1" target="Natural" as="natural key" /><map source="s2" target="Surrogate" as="surrogate key" /><map source="s3" target="Metadata" as="metadata" /><map source="s4" target="Value" /></load><load source="StageQuery" target="InsertQuery" type="insert">
+    select ''O''''Brien'' as s1
+    <map source="s1" target="Value" /></load><load source="StageMerge" target="MergeTable"><sql position="before">select ''before'';</sql>
+    select s1, s2 from StageMerge
+    <condition>[source].[s1] &gt; 0</condition><map source="s1" target="Key" as="natural key" /><map source="s2" target="StaticField" as="static" deletable="true" /><map source="s3" target="ValueField" deletable="true" /><map source="s4" target="HistoryField" as="history" /><map source="s5" target="OpinionField" as="opinion" /><map source="s6" target="Metadata" as="metadata" /><sql position="after">select ''after'';</sql></load><load source="StageKeys" target="KeysOnly"><map source="s1" target="Key" as="surrogate key" /></load></target>';
+DECLARE @name varchar(255) = @xml.value('/target[1]/@name', 'varchar(255)');
+DECLARE @CF_ID int;
+SELECT
+    @CF_ID = CF_ID
+FROM
+    TestMetadata.metadata.lCF_Configuration
+WHERE
+    CF_NAM_Configuration_Name = @name;
+IF(@CF_ID is null)
+BEGIN
+    INSERT INTO TestMetadata.metadata.lCF_Configuration (
+        CF_TYP_CFT_ConfigurationType,
+        CF_NAM_Configuration_Name,
+        CF_XML_Configuration_XMLDefinition
+    )
+    VALUES (
+        'Target',
+        @name,
+        @xml
+    );
+END
+ELSE
+BEGIN
+    UPDATE TestMetadata.metadata.lCF_Configuration
+    SET
+        CF_XML_Configuration_XMLDefinition = @xml
+    WHERE
+        CF_NAM_Configuration_Name = @name;
+END

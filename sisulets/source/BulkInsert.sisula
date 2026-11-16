@@ -1,0 +1,134 @@
+IF Object_ID('$sourceSchema$.$source.qualified$_BulkInsert', 'P') IS NOT NULL
+DROP PROCEDURE [$sourceSchema$].[$source.qualified$_BulkInsert];
+GO
+
+--------------------------------------------------------------------------
+-- Procedure: $source.qualified$_BulkInsert
+--
+-- This procedure performs a BULK INSERT of the given filename into
+-- the $source.qualified$_Insert view. The file is loaded row by row
+-- into a single column holding the entire row. This ensures that no
+-- data is lost when loading.
+--
+-- This job may called multiple times in a workflow when more than
+-- one file matching a given filename pattern is found.
+--
+-- Generated: $generated$ by $username$
+-- From: $computer$ in the $domain$ domain
+--------------------------------------------------------------------------
+CREATE PROCEDURE [$sourceSchema$].[$source.qualified$_BulkInsert] (
+	@filename varchar(2000),
+    @lastModified datetime,
+    @agentJobId uniqueidentifier = null,
+    @agentStepId smallint = null
+)
+AS
+BEGIN
+SET NOCOUNT ON;
+DECLARE @CO_ID int;
+DECLARE @JB_ID int;
+DECLARE @inserts int;
+DECLARE @updates int;
+$sourceMeta.beginBulk$
+$sourceMeta.bulkSourceToTarget$
+    IF Object_ID('$sourceSchema$.$source.qualified$_Insert', 'V') IS NOT NULL
+    BEGIN
+    EXEC('
+        BULK INSERT [$sourceSchema$].[$source.qualified$_Insert]
+        FROM ''' + @filename + '''
+        WITH (
+$/ if source.present.format
+            FORMAT          = ''$source.format$'',
+$/ endif
+$/ if source.present.codepage
+            CODEPAGE        = ''$source.codepage$'',
+$/ endif
+$/ if isBulk
+$/ if source.present.fieldquote
+            FIELDQUOTE      = ''$source.fieldquote$'',
+$/ endif
+$/ if hasFormatFile
+            FORMATFILE      = ''$formatFile$'',
+$/ endif
+$/ else
+$/ if source.present.datafiletype
+            DATAFILETYPE    = ''$source.datafiletype$'',
+$/ endif
+$/ if source.present.fieldquote
+            FIELDQUOTE      = ''$source.fieldquote$'',
+$/ endif
+$/ if source.present.fieldterminator
+            FIELDTERMINATOR = ''$source.fieldterminator$'',
+$/ endif
+$/ if source.present.rowterminator
+            ROWTERMINATOR   = ''$source.rowterminator$'',
+$/ endif
+$/ endif
+$/ if source.present.firstrow
+            FIRSTROW        = $source.firstrow$,
+$/ endif
+            TABLOCK
+        );
+    ');
+    SET @inserts = @@ROWCOUNT;
+$/ if metadata
+    EXEC $metadatabase$.metadata._WorkSetInserts @workId, @operationsId, @inserts;
+    SET @CO_ID = ISNULL((
+        SELECT TOP 1
+            CO_ID
+        FROM
+            $metadatabase$.metadata.lCO_Container
+        WHERE
+            CO_NAM_Container_Name = @filename
+        AND
+            CO_CRE_Container_Created = @lastModified
+    ), 0);
+    SET @JB_ID = ISNULL((
+        SELECT
+            jb.JB_ID
+        FROM
+            $metadatabase$.metadata.lWO_part_JB_of wojb
+        JOIN
+            $metadatabase$.metadata.lJB_Job jb
+        ON
+            jb.JB_ID = wojb.JB_ID_of
+        AND
+            jb.JB_AID_AID_AgentJobId = @agentJobId
+        WHERE
+            wojb.WO_ID_part = @workId
+    ), 0);
+$/ else
+    SET @CO_ID = 1 + (
+        SELECT TOP 1
+            metadata_CO_ID
+        FROM
+            [$sourceSchema$].[$source.qualified$_Raw]
+        ORDER BY
+            metadata_CO_ID
+        DESC
+    );
+    SET @JB_ID = CHECKSUM(@agentJobId);
+$/ endif
+$/ if isBulk
+    UPDATE [$sourceSchema$].[$source.qualified$_RawSplit]
+    SET
+        metadata_CO_ID =
+          case when metadata_CO_ID = 0 then @CO_ID else metadata_CO_ID end,
+        metadata_JB_ID =
+          case when metadata_JB_ID = 0 then @JB_ID else metadata_JB_ID end;
+$/ else
+    UPDATE [$sourceSchema$].[$source.qualified$_Raw]
+    SET
+    metadata_CO_ID =
+      case when metadata_CO_ID = 0 then @CO_ID else metadata_CO_ID end,
+    metadata_JB_ID =
+      case when metadata_JB_ID = 0 then @JB_ID else metadata_JB_ID end;
+$/ endif
+    SET @updates = @@ROWCOUNT;
+$/ if metadata
+    EXEC $metadatabase$.metadata._WorkSetUpdates @workId, @operationsId, @updates;
+$/ endif
+    END
+$sourceMeta.end$
+END
+GO
