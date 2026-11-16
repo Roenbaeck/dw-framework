@@ -18,6 +18,7 @@ jobs:
             'format-parity.ps1',
             'target-parity.ps1',
             'biml-parity.ps1',
+            'variables-bat.ps1',
             'preview-only.ps1',
             'launchers.ps1'
           )

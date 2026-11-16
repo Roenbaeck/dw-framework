@@ -4,6 +4,16 @@ Release notes of the Metadata Driven DW Automation framework, newest first.
 
 Until 2026-09-30 the framework lived in the [sisula](https://github.com/Roenbaeck/sisula) repository, and these notes were written as its GitHub releases. That repository now holds only the Sisula template engine, so the notes are kept here, with their original publication dates. Every version is a tag in this repository; only the latest has a release page.
 
+## Unreleased
+
+Every generator (format files, source and target SQL, BIML and workflows) now renders with the Sisula engine (`code/sisula.js`, vendored from the [sisula](https://github.com/Roenbaeck/sisula) repository) from JSON bindings and declarative `.sisula` templates. The original Sisulator (`Sisulator.js`, `Sisulator4PS.js` and `Sisulator.hta`) is removed, and with it the evaluation of JavaScript expressions in templates. The generated files are the same as before: `tests/` compares them with snapshots of the retired renderer, and a workflow on GitHub runs the tests.
+
+**What to check in an existing project:**
+
+* **Your own sisulets and directives are not run.** The renderer uses the `.sisula.directive` files and the templates in `sisulets/`; the original directives and `.js` sisulets are left as a historical reference. A change that you made to them has to be made again in a template (`Bindings.js` prepares the data of each output).
+* **`Variables.BAT` is read, not run.** The launchers (`Sisulate.bat`, `SisulateWSH.bat`) call `Sisulate.ps1`, which understands `set NAME=value` (also `set "NAME=value"` and `@set`), `%NAME%`, `%~dp0`, `if defined` and `if "a"=="b"`, and ignores `REM`, `echo` and `setlocal`. It warns about the rest (`set /a`, `call`, `goto`, `for`, labels, `if exist` and so on) and does not run it, so a variable that such a line sets is missing: read the warnings the first time. See the README.
+* **`-Renderer Sisulator` is an error.** `-Renderer Sisula` (the default) is still accepted.
+
 ## [v2.0.3](https://github.com/Roenbaeck/dw-framework/releases/tag/v2.0.3) - 2026-06-12
 
 Missing target SQL files could cause an error, which has now been fixed.

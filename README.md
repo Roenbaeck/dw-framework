@@ -68,9 +68,22 @@ remain as historical references and cannot be executed by this version.
 vendored from the sisula repository (commit `57b6bbe`).
 
 `Sisulate.bat` and `SisulateWSH.bat` now call the PowerShell generator. Unlike
-the old batch implementations, they do not execute `Variables.BAT`: PowerShell
-imports its simple `set name=value` lines. Batch commands, control flow and
-batch variable expansion in that file must be migrated.
+the old batch implementations, they do not run `Variables.BAT`: `code\VariablesBat.ps1`
+reads it, line by line, and understands the part of the batch language that sets
+variables:
+
+* `set NAME=value`, `set "NAME=value"` and `@set`, and several of them on a line joined
+  with `&` or `&&`;
+* `%NAME%` (a variable set earlier in the file, or an environment variable; empty, with a
+  warning, if there is none), `%%`, and `%~dp0`, `%~f0` and the other forms of the file itself;
+* `if defined NAME`, `if not defined NAME` and `if "a"=="b"` (also with `not` and `/i`) in
+  front of such a command;
+* `REM`, `::`, `echo`, `setlocal`, `endlocal`, `title`, `cls`, `color` and `pause`, which are ignored.
+
+Anything else is **not run**, and a warning says which line it was (`set /a` and `set /p`,
+`call`, `goto`, `for`, labels, `if exist`, `%NAME:a=b%`, redirection and pipes, other commands).
+A variable that such a line would have set is then missing, so read the warnings the first
+time a project is generated with this version. `tests\variables-bat.ps1` has every case.
 
 For compatibility, the renderer applies the legacy output cleanup, including
 replacement of the U+00A7-delimited `DOLLAR`, `SINGLE` and `QUOTED` sentinel

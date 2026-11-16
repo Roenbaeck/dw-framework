@@ -102,7 +102,7 @@ try {
 
     $isolated = Join-Path $scratch 'framework'
     New-Item -ItemType Directory -Path (Join-Path $isolated 'code\DLL'), (Join-Path $isolated 'sisulets\workflow') -Force | Out-Null
-    foreach ($file in @('Sisulate.ps1', 'Objectifier4PS.js', 'code\sisula.js', 'code\DLL\Jint.2.11.58.dll',
+    foreach ($file in @('Sisulate.ps1', 'Objectifier4PS.js', 'code\sisula.js', 'code\VariablesBat.ps1', 'code\DLL\Jint.2.11.58.dll',
                         'sisulets\Variables.js', 'sisulets\workflow\Variables.js', 'sisulets\workflow\Bindings.js')) {
         Copy-Item -LiteralPath (Join-Path $framework $file) -Destination (Join-Path $isolated $file)
     }

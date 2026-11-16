@@ -1,5 +1,5 @@
 #
-# Sisulator.ps1 - Modern PowerShell-based ETL Generation Tool (Jint Edition)
+# Sisulate.ps1 - Modern PowerShell-based ETL Generation Tool (Jint Edition)
 #
 # Runs the declarative Sisula templates with the bundled Jint JavaScript engine.
 # Uses Jint JavaScript engine instead of headless Edge for better enterprise compatibility.
@@ -84,24 +84,9 @@ function Initialize-JintEngine {
 }
 
 #-------------------------------------------------------------------
-# Parse Variables.BAT (which we keep for legacy reasons)
+# Read Variables.BAT (it is read, not run: see code\VariablesBat.ps1 for what of it is understood)
 #-------------------------------------------------------------------
-function Import-VariablesFromBatchFile {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$BatchFilePath
-    )
-    $variableMap = @{}
-    Get-Content $BatchFilePath | ForEach-Object {
-        if ($_ -match '^\s*set\s+([^=]+?)\s*=(.*)$') {
-            $name = $matches[1].Trim()
-            $value = $matches[2].Trim()
-            $variableMap[$name] = $value
-        }
-    }
-    return $variableMap
-}
+. (Join-Path -Path $PSScriptRoot -ChildPath 'code\VariablesBat.ps1')
 
 function Invoke-SisulaTransformation {
     param(
@@ -320,7 +305,7 @@ Get-ChildItem -Path "env:" | ForEach-Object { $scriptContextVariables[$_.Name] =
 Write-Host "  * Loaded $($scriptContextVariables.Keys.Count) environment variables."
 $variablesBatPath = Join-Path -Path $FolderPath -ChildPath "Variables.BAT"
 if (Test-Path $variablesBatPath) {
-    $importedVariables = Import-VariablesFromBatchFile -BatchFilePath $variablesBatPath
+    $importedVariables = Import-VariablesFromBatchFile -BatchFilePath $variablesBatPath -Environment $scriptContextVariables
     foreach ($key in $importedVariables.Keys) { $scriptContextVariables[$key] = $importedVariables[$key] }
     Write-Host "  * Parsed and merged $($importedVariables.Keys.Count) variables from 'Variables.BAT'."
 }

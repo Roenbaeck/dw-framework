@@ -13,7 +13,7 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $isolated 'code\DLL'), (Join-Path $project 'sources'),
         (Join-Path $project 'targets'), (Join-Path $project 'workflows'), (Join-Path $project 'formats'),
         (Join-Path $project 'biml') -Force | Out-Null
-    foreach ($file in @('Sisulate.ps1', 'Objectifier4PS.js', 'code\sisula.js', 'code\DLL\Jint.2.11.58.dll',
+    foreach ($file in @('Sisulate.ps1', 'Objectifier4PS.js', 'code\sisula.js', 'code\VariablesBat.ps1', 'code\DLL\Jint.2.11.58.dll',
                         'format.sisula.directive', 'source.sisula.directive', 'target.sisula.directive',
                         'biml.sisula.directive', 'workflow.sisula.directive')) {
         Copy-Item -LiteralPath (Join-Path $framework $file) -Destination (Join-Path $isolated $file)
