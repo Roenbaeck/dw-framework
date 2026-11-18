@@ -10,7 +10,7 @@ Every generator (format files, source and target SQL, BIML and workflows) now re
 
 **What to check in an existing project:**
 
-* **Your own sisulets and directives are not run.** The renderer uses the `.sisula.directive` files and the templates in `sisulets/`; the original directives and `.js` sisulets are left as a historical reference. A change that you made to them has to be made again in a template (`Bindings.js` prepares the data of each output).
+* **Your own sisulets and directives are not run.** The renderer uses the `.sisula.directive` files and the templates in `sisulets/`; the original directives and the `.js` sisulets are removed from the repository (an older version, up to commit `917c7ee`, has them). A change that you made to them has to be made again in a template (`Bindings.js` prepares the data of each output).
 * **`Variables.BAT` is read, not run.** The launchers (`Sisulate.bat`, `SisulateWSH.bat`) call `Sisulate.ps1`, which understands `set NAME=value` (also `set "NAME=value"` and `@set`), `%NAME%`, `%~dp0`, `if defined` and `if "a"=="b"`, and ignores `REM`, `echo` and `setlocal`. It warns about the rest (`set /a`, `call`, `goto`, `for`, labels, `if exist` and so on) and does not run it, so a variable that such a line sets is missing: read the warnings the first time. See the README.
 * **`-Renderer Sisulator` is an error.** `-Renderer Sisula` (the default) is still accepted.
 
