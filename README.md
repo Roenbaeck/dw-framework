@@ -61,8 +61,9 @@ and helper scripts for preparation.
 For each output, `Bindings.js` prepares the data and the corresponding
 `.sisula.directive` lists the declarative templates to render in order. The
 renderer does not run custom scripts or templates from the legacy directives;
-changes to them must be ported separately. The original directives and sisulets
-remain as historical references and cannot be executed by this version.
+changes to them must be ported separately. The original directives and the sisulets
+written as JavaScript (`.js` files with `/*~ ... ~*/` text blocks) have been removed; an
+older version of this repository, up to commit `917c7ee`, has them.
 `-Renderer Sisula` is still accepted; `-Renderer Sisulator` is not.
 `code/sisula.js` is the renderer
 vendored from the sisula repository (commit `57b6bbe`).
@@ -198,9 +199,8 @@ Based on the provided examples, here is the standard project layout:
 | `Sisulate.ps1` | The generator and installer. |
 | `Objectifier4PS.js` | The XML objectifier used by `Sisulate.ps1` in Jint. |
 | `code/sisula.js` | The declarative Sisula renderer. |
-| `source.directive`, `target.directive`, `workflow.directive`, `format.directive`, `biml.directive` | Historical directives for the retired engine; not executed. |
 | `*.sisula.directive` | Ordered declarative templates for the corresponding output. |
-| `sisulets/` | The sisulets, in a folder for each kind of output (`source`, `target`, `workflow`, `format`, `biml`), and the ones they share. |
+| `sisulets/` | The `.sisula` templates and the JavaScript scripts that prepare their data (`Bindings.js`, `Helpers.js`, `Naming.js`, `Variables.js`, `Polyfills.js`), in a folder for each kind of output (`source`, `target`, `workflow`, `format`, `biml`), and the ones they share. |
 | `metadata/` | The scripts that create the metadata model, which is itself an Anchor model (`MetadataModel.xml`), with its logging and utility procedures. |
 | `stats/` | An optional model and procedure for gathering statistics. |
 | `code/` | The CLR utilities (`Utilities<year>.dll`, their `.SHA512` files and the source, `Utilities.cs`), the XSDs of the three XML formats (`source.xsd`, `target.xsd`, `workflow.xsd`), the bundled Jint, and a loading report. |
@@ -228,7 +228,9 @@ Sisula was introduced in [Anchor Modeling](http://www.anchormodeling.com) in ord
 ## Historical reference: the Sisulator and sisulets
 
 This section describes the retired engine and its sisulets, which are no longer
-executed by the framework. See the [declarative Sisula language reference](https://github.com/Roenbaeck/sisula/blob/master/docs/SISULA.md)
+executed by the framework and no longer in this repository: the original directives
+(`source.directive` and the others) and the `.js` sisulets are in the history, up to
+commit `917c7ee`. See the [declarative Sisula language reference](https://github.com/Roenbaeck/sisula/blob/master/docs/SISULA.md)
 and the `.sisula.directive` files for the current renderer.
 
 ### 1. Introduction: The Sisula Concept
